@@ -210,3 +210,7 @@ a.pcard { text-decoration: none; }
 .sip-card .est { font-size: 12px; color: var(--muted); margin: -10px 0 14px; }
 .kpi.link { cursor: pointer; text-decoration: none; color: inherit; display: block; }
 .kpi.link:hover { border-color: var(--primary); }
+.sip-link { background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; font: inherit; color: var(--primary); text-align: right; cursor: pointer; font-variant-numeric: tabular-nums; }
+.sip-link .note { color: var(--primary); text-decoration: underline; }
+.sip-link:hover { background: #eef2f9; }
+.back-link { background: none; padding: 0; color: var(--primary); font-size: 13px; font-weight: 600; margin-bottom: 8px; }

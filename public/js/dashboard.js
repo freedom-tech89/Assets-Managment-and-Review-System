@@ -81,7 +81,11 @@ const Dashboard = (() => {
     const search = host.querySelector("input[type=search]");
     if (search) search.addEventListener("input", () => { term = search.value.trim().toLowerCase(); draw(); });
     if (onClick) {
-      const go = (e) => { const tr = e.target.closest("tr[data-i]"); if (tr) onClick(rows[Number(tr.dataset.i)]); };
+      const go = (e) => {
+        if (e.target.closest("[data-sips]")) return; // the SIP button in a row opens the SIP list instead
+        const tr = e.target.closest("tr[data-i]");
+        if (tr) onClick(rows[Number(tr.dataset.i)]);
+      };
       tbody.addEventListener("click", go);
       tbody.addEventListener("keydown", (e) => { if (e.key === "Enter") go(e); });
     }
@@ -177,7 +181,54 @@ const Dashboard = (() => {
     return sipModal;
   }
 
-  async function sipDetail(id) {
+  let listFilter = null; // the SIP list the detail was opened from, for "Back to list"
+
+  async function sipListModal(query) {
+    const m = modalShell(), body = m.querySelector(".body");
+    listFilter = query;
+    body.innerHTML = `<div class="loading">Loading SIPs…</div>`;
+    m.hidden = false;
+    const params = new URLSearchParams(query);
+    params.set("live", "0");
+    let rows;
+    try { rows = await api("GET", `/sips?${params}`); } catch (e) { body.innerHTML = `<h2>Couldn't load the SIPs</h2><p class="muted">${esc(e.message)}</p>`; return; }
+    rows.sort((a, b) => Number(b.live) - Number(a.live) || (b.monthly_amount || 0) - (a.monthly_amount || 0));
+    const live = rows.filter((r) => r.live);
+    const who = params.get("client");
+    const where = [params.get("product"), params.get("platform")].filter(Boolean).join(" · ");
+    body.innerHTML = `
+      <h2>${who ? `SIPs of ${esc(who)}` : "SIPs"}</h2>
+      <div class="meta">${where ? `<span class="chip">${esc(where)}</span>` : ""}
+        <span class="muted small">${plural(live.length, "live SIP")} · ${fmt.money(live.reduce((t, r) => t + (r.monthly_amount || 0), 0))} a month${rows.length > live.length ? ` · ${rows.length - live.length} ended` : ""}</span></div>
+      <p class="muted small" style="margin:0 0 10px">Click a SIP to see its full details.</p>
+      <div class="table-wrap"><table class="uploads data"><thead><tr>${who ? "" : "<th>Client</th>"}<th>Scheme</th><th>Platform</th><th class="num">SIP Amount</th>
+        <th>Frequency</th><th class="num">Monthly</th><th class="num">SIP Day</th><th>Start</th><th>Status</th></tr></thead><tbody>${rows.map((r) => `
+        <tr class="click" tabindex="0" data-sip="${r.id}">${who ? "" : `<td><b>${esc(r.client_name)}</b></td>`}
+          <td>${esc(r.security_name || "–")}${r.identifier ? `<span class="note">${esc(r.identifier)}</span>` : ""}</td>
+          <td class="nw">${esc(r.platform)}<span class="note">${esc(r.product)}</span></td><td class="num">${fmt.money(r.sip_amount)}</td>
+          <td>${esc(r.frequency || "")}</td><td class="num">${fmt.money(r.monthly_amount)}</td><td class="num">${r.sip_day ?? "–"}</td>
+          <td class="nw">${fmt.date(r.start_date)}</td>
+          <td><span class="badge ${r.live ? "ok" : "muted"}">${esc(r.status || (r.live ? "Active" : "Ended"))}</span></td></tr>`).join("")
+        || `<tr class="empty"><td colspan="9">No SIPs found.</td></tr>`}</tbody></table></div>`;
+    body.querySelectorAll("tr[data-sip]").forEach((tr) => {
+      const open = () => sipDetail(Number(tr.dataset.sip), true);
+      tr.addEventListener("click", open);
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+    });
+    m.querySelector(".modal-card").scrollTop = 0;
+    m.querySelector(".close").focus();
+  }
+
+  // Any "n live SIPs" button on a dashboard opens the list of those SIPs.
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-sips]");
+    if (!b) return;
+    e.preventDefault();
+    sipListModal(b.dataset.sips);
+  });
+
+  async function sipDetail(id, fromList = false) {
+    if (!fromList) listFilter = null;
     const m = modalShell(), body = m.querySelector(".body");
     body.innerHTML = `<div class="loading">Loading SIP…</div>`;
     m.hidden = false;
@@ -187,6 +238,7 @@ const Dashboard = (() => {
     const dash = (v) => (v === null || v === undefined || v === "" ? "–" : esc(v));
     const fact = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
     body.innerHTML = `
+      ${listFilter !== null ? `<button type="button" class="back-link" data-back>‹ Back to the SIP list</button>` : ""}
       <h2 id="sipTitle">${esc(s.security_name || "SIP")}</h2>
       <div class="meta"><span class="badge ${s.live ? "ok" : "muted"}">${esc(s.status || (s.live ? "Active" : "Ended"))}</span>
         <span class="chip">${esc(s.product)}</span><span class="chip">${esc(s.platform)}</span>
@@ -231,8 +283,10 @@ const Dashboard = (() => {
         <tr class="click" tabindex="0" data-sip="${o.id}"><td>${esc(o.security_name || "–")}<span class="note">${esc(o.platform)} · ${esc(o.product)}</span></td>
         <td class="num">${fmt.money(o.sip_amount)} <span class="muted small">${esc(o.frequency)}</span></td>
         <td><span class="badge ${o.live ? "ok" : "muted"}">${esc(o.status || "")}</span></td></tr>`).join("")}</tbody></table></div>` : ""}`;
+    const back = body.querySelector("[data-back]");
+    if (back) back.addEventListener("click", () => sipListModal(listFilter));
     body.querySelectorAll("tr[data-sip]").forEach((tr) => {
-      const open = () => sipDetail(Number(tr.dataset.sip));
+      const open = () => sipDetail(Number(tr.dataset.sip), listFilter !== null);
       tr.addEventListener("click", open);
       tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
     });
@@ -263,7 +317,15 @@ const Dashboard = (() => {
     });
   }
 
-  function clientColumns() {
+  // Monthly SIP cell that opens the list of those SIPs. filter: {client, platform, product}.
+  function sipCell(r, filter) {
+    if (!r.sips) return "–";
+    const q = new URLSearchParams(Object.entries(filter).filter(([, v]) => v));
+    return `<button type="button" class="sip-link" data-sips="${esc(q.toString())}" title="Show these SIPs">${fmt.money(r.sip_monthly)}
+      <span class="note">${plural(r.live_sips, "live SIP")} ›</span></button>`;
+  }
+
+  function clientColumns(scope = {}) {
     return [
       { label: "Client", value: (r) => r.client_name, search: true, html: (r) => `<a href="#/client/${enc(r.client_name)}">${esc(r.client_name)}</a>${chips(r.products)}` },
       { label: "Client ID / PAN", value: (r) => r.client_id, search: true },
@@ -273,7 +335,7 @@ const Dashboard = (() => {
       { label: "Gain / Loss", value: (r) => r.gain_loss, num: true, html: (r) => gainText(r.gain_loss) },
       { label: "Abs Ret %", value: (r) => r.return_pct, num: true, html: (r) => `<span class="${fmt.signCls(r.return_pct)}">${fmt.pct(r.return_pct)}</span>` },
       { label: "XIRR %", value: (r) => r.xirr, num: true, html: (r) => fmt.pct(r.xirr) },
-      { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => (r.sips ? `${fmt.money(r.sip_monthly)}<span class="note">${plural(r.live_sips, "live SIP")}</span>` : "–") },
+      { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => sipCell(r, { client: r.client_name, ...scope }) },
       { label: "Loans", value: (r) => r.loan_value, num: true, html: (r) => (r.loan_value ? fmt.money(r.loan_value) : "–") },
     ];
   }
@@ -366,7 +428,7 @@ const Dashboard = (() => {
           { label: "Invested", value: (r) => r.invested, num: true, html: (r) => fmt.money(r.invested) },
           { label: "Gain / Loss", value: (r) => r.gain_loss, num: true, html: (r) => gainText(r.gain_loss, r.return_pct) },
           { label: "XIRR", value: (r) => r.xirr, num: true, html: (r) => fmt.pct(r.xirr) },
-          { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => (r.sips ? fmt.money(r.sip_monthly) : "–") },
+          { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => sipCell(r, { platform: pName || r.platform, product: product || r.product }) },
           { label: "As at", value: (r) => r.as_of, cls: "nw", html: (r) => fmt.date(r.as_of) },
         ],
       });
@@ -374,7 +436,7 @@ const Dashboard = (() => {
     dataTable($("clientTable"), {
       rows: d.clients, searchPlaceholder: "Search clients", initialSort: 4,
       onClick: (r) => { location.hash = `#/client/${enc(r.client_name)}`; },
-      columns: clientColumns(),
+      columns: clientColumns({ platform: pName || "", product: product || "" }),
       footer: ["Total", "", t.holdings, fmt.money(t.invested), fmt.money(t.current_value), gainText(t.gain_loss), fmt.pct(t.return_pct),
         fmt.pct(t.xirr), t.sips ? fmt.money(t.sip_monthly) : "–", t.loans ? fmt.money(t.loans) : "–"],
     });
@@ -412,7 +474,7 @@ const Dashboard = (() => {
         { label: "Current Value", value: (r) => r.current_value, num: true, html: (r) => (!r.holdings ? "–" : `${fmt.money(r.current_value)}${r.product === "LAS" ? '<span class="note">loan outstanding</span>' : ""}`) },
         { label: "Gain", value: (r) => r.gain_loss, num: true, html: (r) => (r.product === "LAS" || !r.holdings ? "–" : gainText(r.gain_loss, r.return_pct)) },
         { label: "XIRR", value: (r) => r.xirr, num: true, html: (r) => fmt.pct(r.xirr) },
-        { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => (r.sips ? `${fmt.money(r.sip_monthly)}<span class="note">${plural(r.live_sips, "live SIP")}</span>` : "–") },
+        { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => sipCell(r, { client: d.clientName, platform: r.platform, product: r.product }) },
       ],
     });
 
@@ -477,5 +539,5 @@ const Dashboard = (() => {
     }
   }
 
-  return { home, scope, client, sips, sipDetail };
+  return { home, scope, client, sips, sipDetail, sipListModal };
 })();
