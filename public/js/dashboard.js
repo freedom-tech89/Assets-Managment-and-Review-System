@@ -82,7 +82,7 @@ const Dashboard = (() => {
     if (search) search.addEventListener("input", () => { term = search.value.trim().toLowerCase(); draw(); });
     if (onClick) {
       const go = (e) => {
-        if (e.target.closest("[data-sips]")) return; // the SIP button in a row opens the SIP list instead
+        if (e.target.closest("[data-sips], [data-filter-sips]")) return; // the SIP button in a row opens the SIP list instead
         const tr = e.target.closest("tr[data-i]");
         if (tr) onClick(rows[Number(tr.dataset.i)]);
       };
@@ -461,7 +461,8 @@ const Dashboard = (() => {
       <div class="alloc-wide">${allocation(d.assets, t.current_value)}</div>
       <div class="card"><h3 class="section-title">Scheme-wise Investment Details</h3><div id="schemeTable"></div></div>
       ${d.sips.length ? `<div class="card"><h3 class="section-title">SIP Details</h3>
-        <div class="seg-chips" id="sipCats" role="group" aria-label="Filter SIPs by category"></div><div id="sipTable"></div></div>` : ""}
+        <div class="seg-chips" id="sipCats" role="group" aria-label="Filter SIPs by category"></div>
+        <p id="sipFilterNote" class="filter-note" hidden></p><div id="sipTable"></div></div>` : ""}
       <div class="card"><h3 class="section-title">Update history</h3><p class="muted small" style="margin:-6px 0 10px">Every upload with this client's data is kept. The latest version of each platform + category is used above.</p><div id="histTable"></div></div>`;
 
     dataTable($("ppTable"), {
@@ -475,7 +476,9 @@ const Dashboard = (() => {
         { label: "Current Value", value: (r) => r.current_value, num: true, html: (r) => (!r.holdings ? "–" : `${fmt.money(r.current_value)}${r.product === "LAS" ? '<span class="note">loan outstanding</span>' : ""}`) },
         { label: "Gain", value: (r) => r.gain_loss, num: true, html: (r) => (r.product === "LAS" || !r.holdings ? "–" : gainText(r.gain_loss, r.return_pct)) },
         { label: "XIRR", value: (r) => r.xirr, num: true, html: (r) => fmt.pct(r.xirr) },
-        { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => sipCell(r, { client: d.clientName, platform: r.platform, product: r.product }) },
+        { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => (r.sips
+          ? `<button type="button" class="sip-link" data-filter-sips="${esc(r.product)}|${esc(r.platform)}" title="Show these SIPs below">${fmt.money(r.sip_monthly)}
+            <span class="note">${plural(r.live_sips, "live SIP")} ›</span></button>` : "–") },
       ],
     });
 
@@ -506,8 +509,16 @@ const Dashboard = (() => {
     });
 
     // SIP table with a category filter (All, MF, Stocks, ...).
-    const drawSips = (cat) => {
-      const rows = cat ? d.sips.filter((x) => x.product === cat) : d.sips;
+    // cat: category to show ("" = all); platform: optionally only that platform's SIPs.
+    const drawSips = (cat, platform = "") => {
+      const rows = d.sips.filter((x) => (!cat || x.product === cat) && (!platform || x.platform === platform));
+      const note = $("sipFilterNote");
+      note.hidden = !platform;
+      if (platform) {
+        note.innerHTML = `Showing ${plural(rows.filter((x) => x.live).length, "live SIP")} in <b>${esc(cat)} · ${esc(platform)}</b>
+          (${rows.length} in total). <button type="button" class="back-link" data-all>Show all SIPs</button>`;
+        note.querySelector("[data-all]").addEventListener("click", () => drawSips(""));
+      }
       const live = rows.filter((x) => x.live);
       $("sipCats").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.cat === (cat || "")));
       dataTable($("sipTable"), {
@@ -535,6 +546,14 @@ const Dashboard = (() => {
         .map(([v, l]) => `<button type="button" class="chip-btn" data-cat="${esc(v)}">${esc(l)} <span class="muted">${v ? d.sips.filter((x) => x.product === v && x.live).length : t.live_sips}</span></button>`).join("");
       $("sipCats").addEventListener("click", (e) => { const b = e.target.closest("button[data-cat]"); if (b) drawSips(b.dataset.cat); });
       drawSips("");
+      // "n live SIPs" in the Category & Platform table filters the SIP table to that row.
+      $("ppTable").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-filter-sips]");
+        if (!b) return;
+        const [cat, platform] = b.dataset.filterSips.split("|");
+        drawSips(cat, platform);
+        $("sipTable").closest(".card").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     }
     historyTable($("histTable"), d.history, { client: true });
     linkSipKpi("");

@@ -29,6 +29,8 @@
     return Dashboard.home();
   }
 
+  $("appVersion").textContent = `Version ${APP_VERSION}`;
+
   function enterApp() {
     loginView.hidden = true;
     appView.hidden = false;
