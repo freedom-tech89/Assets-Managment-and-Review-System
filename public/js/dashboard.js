@@ -460,7 +460,8 @@ const Dashboard = (() => {
       <div class="card"><h3 class="section-title">Category & Platform</h3><div id="ppTable"></div></div>
       <div class="alloc-wide">${allocation(d.assets, t.current_value)}</div>
       <div class="card"><h3 class="section-title">Scheme-wise Investment Details</h3><div id="schemeTable"></div></div>
-      ${d.sips.length ? `<div class="card"><h3 class="section-title">SIP Details</h3><div id="sipTable"></div></div>` : ""}
+      ${d.sips.length ? `<div class="card"><h3 class="section-title">SIP Details</h3>
+        <div class="seg-chips" id="sipCats" role="group" aria-label="Filter SIPs by category"></div><div id="sipTable"></div></div>` : ""}
       <div class="card"><h3 class="section-title">Update history</h3><p class="muted small" style="margin:-6px 0 10px">Every upload with this client's data is kept. The latest version of each platform + category is used above.</p><div id="histTable"></div></div>`;
 
     dataTable($("ppTable"), {
@@ -504,9 +505,13 @@ const Dashboard = (() => {
       footer: aum.length ? ["", "", "", "", `Total AUM <span class="muted small">(excl. loans)</span>`, "", "", fmt.money(t.invested), "", "", fmt.money(t.current_value), gainText(t.gain_loss), "100.00%", fmt.pct(t.return_pct), fmt.pct(t.xirr)] : null,
     });
 
-    if (d.sips.length) {
+    // SIP table with a category filter (All, MF, Stocks, ...).
+    const drawSips = (cat) => {
+      const rows = cat ? d.sips.filter((x) => x.product === cat) : d.sips;
+      const live = rows.filter((x) => x.live);
+      $("sipCats").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.cat === (cat || "")));
       dataTable($("sipTable"), {
-        rows: d.sips, searchPlaceholder: "Search scheme, folio or platform", initialSort: 6,
+        rows, searchPlaceholder: "Search scheme, folio or platform", initialSort: 6,
         onClick: (r) => sipDetail(r.id),
         columns: [
           { label: "Category", value: (r) => r.product, search: true },
@@ -521,8 +526,15 @@ const Dashboard = (() => {
           { label: "End", value: (r) => r.end_date, cls: "nw", html: (r) => fmt.date(r.end_date) },
           { label: "Status", value: (r) => (r.live ? 1 : 0), html: (r) => `<span class="badge ${r.live ? "ok" : "muted"}">${esc(r.status || (r.live ? "Active" : "Ended"))}</span>` },
         ],
-        footer: ["Live total", "", plural(t.live_sips, "live SIP"), "", "", "", fmt.money(t.sip_monthly), "", "", ""],
+        footer: ["Live total", "", plural(live.length, "live SIP"), "", "", "", fmt.money(live.reduce((x, r) => x + (r.monthly_amount || 0), 0)), "", "", ""],
       });
+    };
+    if (d.sips.length) {
+      const cats = [...new Set(d.sips.map((x) => x.product))];
+      $("sipCats").innerHTML = (cats.length > 1 ? [["", "All"], ...cats.map((c) => [c, c])] : [])
+        .map(([v, l]) => `<button type="button" class="chip-btn" data-cat="${esc(v)}">${esc(l)} <span class="muted">${v ? d.sips.filter((x) => x.product === v && x.live).length : t.live_sips}</span></button>`).join("");
+      $("sipCats").addEventListener("click", (e) => { const b = e.target.closest("button[data-cat]"); if (b) drawSips(b.dataset.cat); });
+      drawSips("");
     }
     historyTable($("histTable"), d.history, { client: true });
     linkSipKpi("");

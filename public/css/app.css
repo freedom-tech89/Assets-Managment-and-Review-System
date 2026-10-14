@@ -214,3 +214,7 @@ a.pcard { text-decoration: none; }
 .sip-link .note { color: var(--primary); text-decoration: underline; }
 .sip-link:hover { background: #eef2f9; }
 .back-link { background: none; padding: 0; color: var(--primary); font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.seg-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: -4px 0 12px; }
+.chip-btn { background: #eef2f9; color: var(--primary); border: 1px solid transparent; border-radius: 16px; padding: 4px 12px; font-size: 13px; font-weight: 600; }
+.chip-btn.active { background: var(--primary); color: #fff; }
+.chip-btn.active .muted { color: #cfd8ea; }
