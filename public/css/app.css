@@ -221,3 +221,6 @@ a.pcard { text-decoration: none; }
 .filter-note { background: #eef2f9; border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; font-size: 14px; }
 .filter-note .back-link { margin: 0 0 0 6px; }
 .app-version { text-align: center; color: var(--muted); font-size: 12px; margin: 0 0 24px; }
+.review-btn { padding: 5px 10px; font-size: 12.5px; white-space: nowrap; }
+.page-head .review-btn { padding: 9px 14px; font-size: 14px; }
+.review-btn:disabled { opacity: .6; cursor: progress; }

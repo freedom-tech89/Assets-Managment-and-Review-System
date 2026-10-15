@@ -82,7 +82,7 @@ const Dashboard = (() => {
     if (search) search.addEventListener("input", () => { term = search.value.trim().toLowerCase(); draw(); });
     if (onClick) {
       const go = (e) => {
-        if (e.target.closest("[data-sips], [data-filter-sips]")) return; // the SIP button in a row opens the SIP list instead
+        if (e.target.closest("[data-sips], [data-filter-sips], [data-review]")) return; // buttons in a row do their own thing
         const tr = e.target.closest("tr[data-i]");
         if (tr) onClick(rows[Number(tr.dataset.i)]);
       };
@@ -325,6 +325,26 @@ const Dashboard = (() => {
       <span class="note">${plural(r.live_sips, "live SIP")} ›</span></button>`;
   }
 
+  // "Review Report" button: downloads the client's review sheet (public/js/review.js).
+  const reviewButton = (name) => `<button type="button" class="outline review-btn" data-review="${esc(name)}" title="Download the client review sheet (Excel)">Review Report</button>`;
+
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-review]");
+    if (!b || b.disabled) return;
+    e.preventDefault();
+    const label = b.textContent;
+    b.disabled = true;
+    b.textContent = "Preparing…";
+    try {
+      await Review.download(b.dataset.review);
+    } catch (err) {
+      alert(`Could not create the review report: ${err.message}`);
+    } finally {
+      b.disabled = false;
+      b.textContent = label;
+    }
+  });
+
   function clientColumns(scope = {}) {
     return [
       { label: "Client", value: (r) => r.client_name, search: true, html: (r) => `<a href="#/client/${enc(r.client_name)}">${esc(r.client_name)}</a>${chips(r.products)}` },
@@ -337,6 +357,7 @@ const Dashboard = (() => {
       { label: "XIRR %", value: (r) => r.xirr, num: true, html: (r) => fmt.pct(r.xirr) },
       { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => sipCell(r, { client: r.client_name, ...scope }) },
       { label: "Loans", value: (r) => r.loan_value, num: true, html: (r) => (r.loan_value ? fmt.money(r.loan_value) : "–") },
+      { label: "Review", value: () => "", cls: "nw", html: (r) => reviewButton(r.client_name) },
     ];
   }
 
@@ -390,7 +411,13 @@ const Dashboard = (() => {
             <div class="small muted">${plural(b.files, "file")}: ${b.new_files ? `${b.new_files} new` : ""}${b.new_files && b.files - b.new_files ? ", " : ""}${b.files - b.new_files ? `${b.files - b.new_files} added as new versions` : ""} · data as of ${fmt.date(b.snapshot_date)}</div>
           </div>`).join("")}</div>
           <a href="#/admin" class="small">Upload more files →</a></div>
-      </div></div>`;
+      </div></div>
+      <div class="card"><h3 class="section-title">Clients</h3><div id="clientTable"></div></div>`;
+    dataTable($("clientTable"), {
+      rows: d.clients, searchPlaceholder: "Search clients", initialSort: 4,
+      onClick: (r) => { location.hash = `#/client/${enc(r.client_name)}`; },
+      columns: clientColumns(),
+    });
     linkSipKpi("");
   }
 
@@ -438,7 +465,7 @@ const Dashboard = (() => {
       onClick: (r) => { location.hash = `#/client/${enc(r.client_name)}`; },
       columns: clientColumns({ platform: pName || "", product: product || "" }),
       footer: ["Total", "", t.holdings, fmt.money(t.invested), fmt.money(t.current_value), gainText(t.gain_loss), fmt.pct(t.return_pct),
-        fmt.pct(t.xirr), t.sips ? fmt.money(t.sip_monthly) : "–", t.loans ? fmt.money(t.loans) : "–"],
+        fmt.pct(t.xirr), t.sips ? fmt.money(t.sip_monthly) : "–", t.loans ? fmt.money(t.loans) : "–", ""],
     });
     historyTable($("histTable"), d.history);
     linkSipKpi(q.toString());
@@ -455,7 +482,7 @@ const Dashboard = (() => {
     view.innerHTML = `${crumbs([["Dashboard", "#/dashboard"], ...back, [d.clientName]])}
       <div class="page-head"><div><h1>${esc(d.clientName)}</h1>
         <div class="sub">${d.clientId ? `${esc(d.clientId)} · ` : ""}${plural(t.holdings, "holding")} · ${plural(d.products.length, "category", "categories")} · ${plural(t.platforms, "platform")} · as at ${fmt.date(t.as_of)}</div></div>
-        <button class="outline" id="dlClient">Download Excel report</button></div>
+        <div class="actions">${reviewButton(d.clientName)}<button class="outline" id="dlClient">Download Excel report</button></div></div>
       ${allKpis(t)}
       <div class="card"><h3 class="section-title">Category & Platform</h3><div id="ppTable"></div></div>
       <div class="alloc-wide">${allocation(d.assets, t.current_value)}</div>

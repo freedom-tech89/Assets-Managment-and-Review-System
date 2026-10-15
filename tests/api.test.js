@@ -140,6 +140,26 @@ try {
   assert.equal(ex.uploads.find((u) => u.platform === "NJ").holdings.length, 1, "only Medha's row from the NJ bulk file");
   assert.equal((await api("GET", "/export?batch=b1")).body.uploads.length, 4);
 
+  // Client Review Sheet: the endpoint returns every version, and the template is filled in
+  const rv = (await api("GET", "/review?client=Medha Dongre Mala")).body;
+  assert.equal(rv.clientName, "Medha Dongre Mala");
+  assert.ok(rv.uploads.some((u) => u.id === a1.body.id), "older versions included for the journey over time");
+  assert.equal(rv.holdings.filter((x) => x.platform === "NJ").length, 1, "only Medha's rows from the NJ bulk file");
+  assert.equal((await api("GET", "/review?client=Nobody")).status, 404);
+  const script = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
+  const mod = { exports: {} };
+  new Function("module", "exports", script("public/lib/jszip.min.js"))(mod, mod.exports);
+  const Review = new Function("JSZip", `${script("public/js/review.js")}\nreturn Review;`)(mod.exports);
+  const book = await Review.build(rv, fs.readFileSync(path.join(ROOT, "public/templates/client-review.xlsx")), { output: "nodebuffer" });
+  const zip = await mod.exports.loadAsync(book);
+  assert.ok((await zip.file("xl/worksheets/sheet1.xml").async("string")).includes("MEDHA DONGRE MALA"), "cover has the client name");
+  const detailed = await zip.file("xl/worksheets/sheet6.xml").async("string");
+  assert.ok(detailed.includes("Fund A") && detailed.includes("TOTAL PORTFOLIO OF MEDHA DONGRE MALA"), "scheme-wise sheet filled");
+  assert.equal(Review.mfType("SBI Balanced Advantage Fund", null), "Hybrid");
+  assert.equal(Review.mfType("ICICI Prudential Corporate Bond Fund", null), "Debt");
+  assert.equal(Review.mfType("Kotak Gold Fund", null), "Others");
+  assert.equal(Review.mfType("HDFC Mid-Cap Opportunities Fund", null), "Equity");
+
   // Platforms can be added to the matrix and removed
   const np = await api("POST", "/platforms", { name: "Zerodha", product: "Stocks" });
   assert.equal(np.status, 201);
