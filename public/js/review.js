@@ -157,7 +157,7 @@ const Review = (() => {
   }
 
   const SUB_TYPES = [
-    [/large\s*(&|and)\s*mid/, "Large and Mid Cap"], [/large\s*cap|blue\s*chip|top 100/, "Large Cap"], [/mid[\s-]*cap/, "Mid Cap"],
+    [/large\s*(&|and)\s*mid/, "Large and Mid Cap"], [/large\s*cap|blue\s*chip|frontline|top 100/, "Large Cap"], [/mid[\s-]*cap|emerging equity/, "Mid Cap"],
     [/small[\s-]*cap/, "Small Cap"], [/flexi[\s-]*cap/, "Flexi Cap"], [/multi[\s-]*cap/, "Multi Cap"], [/focused/, "Focused"],
     [/elss|tax\s*saver/, "ELSS"], [/\bvalue\b|contra/, "Value / Contra"], [/dividend yield/, "Dividend Yield"],
     [/balanced advantage|dynamic asset/, "Bal Adv"], [/multi[\s-]*asset/, "Multi AA"], [/aggressive hybrid|equity hybrid/, "Aggressive Hybrid"],
@@ -179,7 +179,15 @@ const Review = (() => {
     return hit ? hit[1] : "";
   }
 
-  const schemeKey = (r) => (r.isin ? `i:${r.isin}` : `n:${lower(r.security_name).replace(/\s+/g, " ").trim()}`);
+  const nameKey = (r) => lower(r.security_name).replace(/[^a-z0-9]+/g, " ").trim();
+  const schemeKey = (r) => (r.isin ? `i:${r.isin}` : `n:${nameKey(r)}`);
+
+  // SIP files rarely carry the ISIN that AUM files do. Give every row without one the ISIN another
+  // row of the same scheme name has, so SIPs line up with their holdings.
+  function shareIsins(rows) {
+    const byName = new Map(rows.filter((r) => r.isin).map((r) => [nameKey(r), r.isin]));
+    return rows.map((r) => (r.isin || !byName.has(nameKey(r)) ? r : { ...r, isin: byName.get(nameKey(r)) }));
+  }
 
   // ---- Data as of a date -----------------------------------------------------------------
   // The rows of one upload for each platform + category. Now (date null): the latest upload, as
@@ -481,6 +489,8 @@ const Review = (() => {
     const paths = await sheetPaths(zip);
     const read = async (name) => new Sheet(await zip.file(paths[name]).async("string"));
     const write = (name, sh) => zip.file(paths[name], sh.toXml());
+    const rows = shareIsins([...data.holdings.map((r) => ({ ...r, _h: 1 })), ...data.sips]);
+    data = { ...data, holdings: rows.filter((r) => r._h), sips: rows.filter((r) => !r._h) };
     const reviewDate = data.today;
     const client = { name: data.clientName, id: data.clientId };
 
