@@ -862,7 +862,8 @@ const SheetView = (() => {
   }
 
   // Lays out a sheet: visible columns and rows with their pixel sizes, and how far the sheet goes.
-  function layout(wb, name) {
+  // opts.showHidden: show columns and rows the sheet hides; opts.hideRows: rows to leave out.
+  function layout(wb, name, opts = {}) {
     const sh = wb.sheet(name);
     let maxR = sh.maxRow, maxC = sh.maxCol;
     for (const x of sh.cells.values()) {
@@ -877,23 +878,24 @@ const SheetView = (() => {
     const cols = [], colX = [0];
     for (let c = 1; c <= maxC; c++) {
       const info = sh.cols.get(c);
-      const w = info?.hidden ? 0 : colPx(info?.w ?? sh.defaultW);
+      const w = info?.hidden && !opts.showHidden ? 0 : colPx(info?.w || sh.defaultW);
       if (w) cols.push({ c, w });
       colX[c] = colX[c - 1] + w;
     }
     const rows = [], rowY = [0];
     for (let r = 1; r <= maxR; r++) {
       const info = sh.rows.get(r);
-      const h = info?.hidden ? 0 : rowPx(info?.ht ?? sh.defaultH);
+      const h = (info?.hidden && !opts.showHidden) || opts.hideRows?.has(r) ? 0 : rowPx(info?.ht || sh.defaultH);
       if (h) rows.push({ r, h });
       rowY[r] = rowY[r - 1] + h;
     }
     return { sh, cols, rows, colX, rowY, maxR, maxC };
   }
 
-  // HTML for one sheet. opts: {isEdited(r, c), isEditable(r, c)}.
+  // HTML for one sheet. opts: {zoom, showHidden, hideRows, isEdited(r, c), isEditable(r, c),
+  // decorate(r, c) -> {cls, before} to add a class and HTML before a cell's text}.
   function render(wb, name, host, opts = {}) {
-    const L = layout(wb, name);
+    const L = layout(wb, name, opts);
     const { sh, cols, rows } = L;
     const visibleCol = new Set(cols.map((x) => x.c)), visibleRow = new Set(rows.map((x) => x.r));
     const covered = new Set(), mergeAt = new Map();
@@ -948,6 +950,8 @@ const SheetView = (() => {
         let spill = false;
         if (!st.wrap && typeof v === "string" && v && !m && hAlign !== "right") spill = empty(r, c + 1);
         const cls = [`xl-x${st.id}`];
+        const deco = opts.decorate ? opts.decorate(r, c) : null;
+        if (deco?.cls) cls.push(deco.cls);
         if (opts.isEdited && opts.isEdited(r, c)) cls.push("xl-edited");
         if (opts.isEditable && !opts.isEditable(r, c)) cls.push("xl-ro");
         const span = `${cs > 1 ? ` colspan="${cs}"` : ""}${rs > 1 ? ` rowspan="${rs}"` : ""}`;
@@ -957,14 +961,15 @@ const SheetView = (() => {
         const inner = `display:flex;align-items:${vAlign};justify-content:${fmt.left != null ? "space-between" : hAlign === "center" ? "center" : hAlign === "right" ? "flex-end" : "flex-start"};`
           + `text-align:${hAlign};height:${hgt - 1}px;${st.indent ? `padding-${hAlign === "right" ? "right" : "left"}:${st.indent * 9}px;` : ""}`
           + `${st.wrap ? "white-space:pre-wrap;" : ""}${spill ? "overflow:visible;" : ""}${st.rotate === 90 || st.rotate === 180 ? "writing-mode:vertical-rl;transform:rotate(180deg);" : st.rotate === 255 ? "writing-mode:vertical-rl;" : ""}`;
-        html += `<td class="${cls.join(" ")}" data-r="${r}" data-c="${c}"${span} style="${style}"><div class="xl-c" style="${inner}">${content}</div></td>`;
+        html += `<td class="${cls.join(" ")}" data-r="${r}" data-c="${c}"${span} style="${style}"><div class="xl-c" style="${inner}">${deco?.before || ""}${content}</div></td>`;
       }
       html += "</tr>";
     }
     html += "</tbody></table>";
 
     // Pictures and charts over the cells.
-    const at = (p) => ({ x: HEAD_W + L.colX[Math.min(p.c, L.maxC)] + (sh.cols.get(p.c + 1)?.hidden ? 0 : p.co), y: HEAD_H + L.rowY[Math.min(p.r, L.maxR)] + (sh.rows.get(p.r + 1)?.hidden ? 0 : p.ro) });
+    const colGone = (c) => L.colX[c] === L.colX[c - 1], rowGone = (r) => L.rowY[r] === L.rowY[r - 1];
+    const at = (p) => ({ x: HEAD_W + L.colX[Math.min(p.c, L.maxC)] + (colGone(p.c + 1) ? 0 : p.co), y: HEAD_H + L.rowY[Math.min(p.r, L.maxR)] + (rowGone(p.r + 1) ? 0 : p.ro) });
     let draw = "";
     for (const d of wb.drawings[name] || []) {
       let x, y, w, hh;

@@ -14,6 +14,9 @@ const ReviewPage = (() => {
   const NUMBER_FIELDS = new Set(["invested", "quantity", "current_value", "xirr", "sip", "newSip"]);
 
   let data = null, edits = {}, wb = null, schemeRows = new Map(), names = new Map();
+  let groups = [], openGroups = new Set(); // DETAILED PORTFOLIO blocks; folded unless opened
+  // Sheets whose hidden columns hold client figures, so the page shows them.
+  const SHOW_HIDDEN = new Set(["SUMMARY PORTFOLIO", DETAILED]);
   let sheetName = null, sel = null, editor = null, active = false, building = null, pending = false;
   let saveTimer = null, saving = null, dirty = false;
   let zoom = Number(store("xlZoom")) || 0.9;
@@ -97,13 +100,16 @@ const ReviewPage = (() => {
     view.innerHTML = `<div class="xl-app">
       <div class="xl-bar">
         <a class="xl-back" href="#/client/${enc(c)}" title="Back to ${esc(c)}">‹</a>
-        <div class="xl-title"><b>Review Sheet of ${esc(c)}</b><span>Click a cell to change it. Right-click a scheme for more.</span></div>
-        <label class="xl-date">Review date <input type="date" id="xlDate" value="${esc(edits.reviewDate || data.today)}"></label>
+        <div class="xl-avatar" aria-hidden="true">${esc(c.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase())}</div>
+        <div class="xl-title"><b>${esc(c)}</b><span title="Click a cell to change it. Right-click a scheme to change its fund type or leave it out.">Review sheet</span></div>
+        <div class="xl-kpis" id="xlKpis"></div>
+        <label class="xl-date" title="Review date">Date <input type="date" id="xlDate" value="${esc(edits.reviewDate || data.today)}"></label>
         <span id="xlStatus" class="xl-status ${data.editsSavedAt ? "ok" : ""}">${data.editsSavedAt ? "Changes saved" : "No changes yet"}</span>
         <button type="button" class="xl-btn" id="xlReset">Reset changes</button>
         <button type="button" class="xl-btn xl-export" id="xlExport">Export Excel</button>
       </div>
-      <div class="xl-fx"><span id="xlName" class="xl-name"></span><span class="xl-fxl">fx</span><input id="xlFx" autocomplete="off" spellcheck="false"></div>
+      <div class="xl-fx"><span id="xlName" class="xl-name"></span><span class="xl-fxl">fx</span><input id="xlFx" autocomplete="off" spellcheck="false">
+        <span class="xl-folds" id="xlFolds" hidden><button type="button" data-fold="open">▾ Expand all</button><button type="button" data-fold="close">▸ Collapse all</button></span></div>
       <div id="xlHost" class="xl-host" tabindex="0"></div>
       <div class="xl-foot">
         <div id="xlTabs" class="xl-tabs" role="tablist"></div>
@@ -129,10 +135,21 @@ const ReviewPage = (() => {
       draw();
     }));
     $("xlOut").addEventListener("click", (e) => leftOutMenu(e));
+    view.querySelectorAll("[data-fold]").forEach((b) => b.addEventListener("click", () => {
+      openGroups = b.dataset.fold === "open" ? new Set(groups.map((g) => g.id)) : new Set();
+      draw();
+    }));
     const host = $("xlHost");
     host.addEventListener("click", (e) => {
       const td = e.target.closest("td[data-r]");
-      if (td) select(Number(td.dataset.r), Number(td.dataset.c));
+      if (!td) return;
+      const r = Number(td.dataset.r);
+      const g = sheetName === DETAILED && groups.find((x) => x.head === r || x.total === r);
+      if (g && (g.head === r || !openGroups.has(g.id))) {
+        if (openGroups.has(g.id)) openGroups.delete(g.id); else openGroups.add(g.id);
+        draw();
+      }
+      select(r, Number(td.dataset.c));
     });
     host.addEventListener("dblclick", (e) => {
       const td = e.target.closest("td[data-r]");
@@ -157,13 +174,14 @@ const ReviewPage = (() => {
       try {
         const out = await Review.assemble(data, await Review.template(), clean(edits));
         schemeRows = out.schemeRows;
+        groups = out.groups || [];
         wb = await SheetView.load(out.zip);
         if (!sheetName || !wb.sheets.some((s) => s.name === sheetName && !s.hidden)) {
           const remembered = store("xlSheet");
           sheetName = wb.sheets.some((s) => s.name === remembered && !s.hidden) ? remembered
             : wb.sheets.find((s) => s.name === "Summary")?.name || wb.sheets.find((s) => !s.hidden).name;
         }
-        if (active) { tabs(); draw(); leftOut(); }
+        if (active) { tabs(); draw(); leftOut(); kpis(); }
       } catch (e) {
         if (active) host.innerHTML = `<div class="card empty-state"><h2>Couldn't build the review sheet</h2><p>${esc(e.message)}</p></div>`;
       } finally {
@@ -190,11 +208,42 @@ const ReviewPage = (() => {
   function draw(top = false) {
     const host = $("xlHost");
     const scroll = top ? { x: 0, y: 0 } : { x: host.scrollLeft, y: host.scrollTop };
-    SheetView.render(wb, sheetName, host, { zoom, isEdited, isEditable });
+    const detailed = sheetName === DETAILED;
+    const hideRows = new Set();
+    if (detailed) for (const g of groups) if (!openGroups.has(g.id)) for (let r = g.first; r <= g.last; r++) hideRows.add(r);
+    SheetView.render(wb, sheetName, host, { zoom, isEdited, isEditable, hideRows, showHidden: SHOW_HIDDEN.has(sheetName), decorate: detailed ? decorate : null });
+    $("xlFolds").hidden = !detailed || !groups.length;
     host.scrollLeft = scroll.x;
     host.scrollTop = scroll.y;
     $("xlZoom").textContent = `${Math.round(zoom * 100)}%`;
     showSelection();
+  }
+
+  // Fold arrows on DETAILED PORTFOLIO: on each fund type (or platform) heading, and on its
+  // Grand Total while folded.
+  function decorate(r, c) {
+    const g = groups.find((x) => x.head === r || x.total === r);
+    if (!g) return null;
+    const open = openGroups.has(g.id);
+    const n = [...schemeRows.keys()].filter((x) => x >= g.first && x <= g.last).length;
+    if (g.head === r && c === 2) {
+      return { cls: "xl-fold", before: `<span class="xl-caret" title="${open ? "Hide" : "Show"} the ${n} scheme${n === 1 ? "" : "s"}">${open ? "▾" : "▸"}</span>` };
+    }
+    if (g.total === r && !open && c === 1) return { cls: "xl-fold", before: `<span class="xl-caret">▸</span>` };
+    if (g.head === r || (g.total === r && !open)) return { cls: "xl-fold" };
+    return null;
+  }
+
+  // Totals with the changes, for the header.
+  function kpis() {
+    const el = $("xlKpis");
+    if (!el) return;
+    const f = Review.prepare(data, clean(edits)).current;
+    const gain = f.value - f.invested;
+    const chip = (label, v, cls = "") => `<div class="xl-kpi ${cls}"><span>${label}</span><b>${v}</b></div>`;
+    el.innerHTML = chip("Current value", fmt.money(f.value)) + chip("Invested", fmt.money(f.invested))
+      + chip("Gain", `${fmt.money(gain)} <small>${fmt.pct(f.invested ? (gain / f.invested) * 100 : null)}</small>`, gain < 0 ? "xl-down" : "xl-up")
+      + chip("Live SIP", fmt.money(f.sip));
   }
 
   // ---- Which cells can change -----------------------------------------------------------------

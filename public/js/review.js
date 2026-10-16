@@ -352,7 +352,8 @@ const Review = (() => {
     });
   }
 
-  function fillDetailed(sh, client, holdings, sips) {
+  // rupee(styleId, refStyleId): the same cell style with the Live SIP column's ₹ number format.
+  function fillDetailed(sh, client, holdings, sips, rupee = (id) => id) {
     // Styles from the template's own rows (see the review sheet this was built from).
     const proto = {
       investor: 3, type: 4, scheme: 6, groupTotal: 15, gap: 16, platformTotal: 34, platformGap: 35,
@@ -364,10 +365,16 @@ const Review = (() => {
     sh.set("P2", "New SIP");
     const merges = [];
     const schemeRows = new Map(); // row number -> rowKey of the scheme on it (for the review page)
+    const folds = []; // fund-type and platform blocks the review page can fold: {id, head, first, last, total}
     let r = 3;
     const start = (kind) => { sh.blankRow(r, attrs[kind], styles[kind]); return r++; };
+    // Scheme rows show ₹ on invested, current value and total, as on the Live SIP column.
+    const RUPEE_COLS = new Set(["D", "G", "J"]);
     const put = (row, kind, values) => {
-      for (const [c, v] of Object.entries(values)) sh.set(`${c}${row}`, v, { s: styles[kind].get(colNum(c)) ?? null });
+      for (const [c, v] of Object.entries(values)) {
+        const st = styles[kind].get(colNum(c)) ?? null;
+        sh.set(`${c}${row}`, v, { s: kind === "scheme" && RUPEE_COLS.has(c) && st !== null ? rupee(st, styles.scheme.get(15)) : st });
+      }
     };
     const pct = (gain, inv) => (inv ? round2((gain / inv) * 100) : null);
     // Columns the reviewer fills on the review dashboard: tenure, new SIP, remarks, suggestions.
@@ -408,7 +415,8 @@ const Review = (() => {
           && typeOfRow(s) === t);
         const extraSchemes = [...new Map(extra.map((s) => [schemeKey(s), s])).values()];
         if (!items.length && !extraSchemes.length) continue;
-        put(start("type"), "type", { A: "Type", B: t === "Others" ? "OTHERS" : t.toUpperCase() });
+        const head = start("type");
+        put(head, "type", { A: "Type", B: t === "Others" ? "OTHERS" : t.toUpperCase() });
         const value = items.reduce((a, h) => a + (h.current_value || 0), 0);
         const first = r;
         let n = 0;
@@ -428,6 +436,7 @@ const Review = (() => {
         }
         const last = r - 1;
         const gt = start("groupTotal");
+        folds.push({ id: `${pk}|MF|${t}`, head, first, last, total: gt });
         merges.push(`A${gt}:C${gt}`);
         const sum = (c) => ({ f: `SUM(${c}${first}:${c}${last})` });
         const inv = items.reduce((a, h) => a + (h.invested || 0), 0);
@@ -452,7 +461,8 @@ const Review = (() => {
       const [pk, prod] = g.split("|");
       const hs = own.filter((h) => h.platform_key === pk && h.product === prod).sort((a, b) => (b.current_value || 0) - (a.current_value || 0));
       const pname = (hs[0] || live.find((s) => s.platform_key === pk && s.product === prod)).platform;
-      put(start("header"), "header", { B: `${pname} · ${prod}` });
+      const head = start("header");
+      put(head, "header", { B: `${pname} · ${prod}` });
       const first = r;
       let n = 0;
       for (const h of hs) {
@@ -470,6 +480,7 @@ const Review = (() => {
       }
       const last = r - 1;
       const st = start("subTotal");
+      folds.push({ id: `${pk}|${prod}`, head, first, last, total: st });
       const sum = (c) => ({ f: last >= first ? `SUM(${c}${first}:${c}${last})` : "0" });
       const value = hs.reduce((a, h) => a + (h.current_value || 0), 0), inv = hs.reduce((a, h) => a + (h.invested || 0), 0);
       put(st, "subTotal", { B: `TOTAL ${pname.toUpperCase()} ${prod.toUpperCase()} PORTFOLIO`, D: sum("D"), E: 0, G: sum("G"), H: 0,
@@ -492,7 +503,7 @@ const Review = (() => {
       for (const l of loans) put(start("item"), "item", { B: `${l.platform} · ${l.security_name || "Loan"}`, G: l.current_value });
     }
     sh.setMerges(merges);
-    return schemeRows;
+    return { schemeRows, groups: folds };
   }
 
   // ---- Reviewer's edits -------------------------------------------------------------------
@@ -636,6 +647,35 @@ const Review = (() => {
     }
   }
 
+  // Adds cell styles to xl/styles.xml: copies of existing ones with another number format.
+  async function cellStyles(zip) {
+    let xml = await zip.file("xl/styles.xml").async("string");
+    const m = /<cellXfs count="\d+">([\s\S]*?)<\/cellXfs>/.exec(xml);
+    const xfs = [...m[1].matchAll(/<xf\b[^>]*?\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)].map((x) => x[0]);
+    const start = xfs.length, made = new Map();
+    const fmtOf = (id) => Number((/numFmtId="(\d+)"/.exec(xfs[id] || "") || [0, 0])[1]);
+    let rupeeFmt = null;
+    return {
+      // Style `id` with the number format of style `ref` (the Live SIP column's ₹ format).
+      rupee(id, ref) {
+        if (rupeeFmt === null) rupeeFmt = fmtOf(Number(ref ?? -1)) || 165;
+        const k = `${id}|${rupeeFmt}`;
+        if (made.has(k)) return made.get(k);
+        let x = xfs[Number(id)];
+        if (!x) return id;
+        x = x.replace(/\s(numFmtId|applyNumberFormat)="[^"]*"/g, "").replace(/^<xf\b/, `<xf numFmtId="${rupeeFmt}" applyNumberFormat="1"`);
+        xfs.push(x);
+        made.set(k, String(xfs.length - 1));
+        return made.get(k);
+      },
+      save() {
+        if (xfs.length === start) return;
+        xml = xml.replace(m[0], `<cellXfs count="${xfs.length}">${xfs.join("")}</cellXfs>`);
+        zip.file("xl/styles.xml", xml);
+      },
+    };
+  }
+
   // The filled-in workbook as a JSZip, plus which DETAILED PORTFOLIO row holds which scheme.
   async function assemble(data, template, edits = data.edits || {}) {
     const zip = await JSZip.loadAsync(template);
@@ -659,7 +699,9 @@ const Review = (() => {
     write("SUMMARY PORTFOLIO", summary);
 
     const detailed = await read("DETAILED PORTFOLIO");
-    const schemeRows = fillDetailed(detailed, client, now.holdings, now.sips);
+    const styleBook = await cellStyles(zip);
+    const { schemeRows, groups } = fillDetailed(detailed, client, now.holdings, now.sips, (id, ref) => styleBook.rupee(id, ref));
+    styleBook.save();
     write("DETAILED PORTFOLIO", detailed);
 
     const blueprint = await read("Freedom Blueprint");
@@ -672,7 +714,7 @@ const Review = (() => {
     }
     applyCells(others, edits.cells);
     for (const [name, sh] of Object.entries(others)) write(name, sh);
-    return { zip, schemeRows };
+    return { zip, schemeRows, groups };
   }
 
   async function build(data, template, { output = "arraybuffer", edits = data.edits || {} } = {}) {
