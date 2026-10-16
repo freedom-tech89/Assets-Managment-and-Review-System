@@ -338,6 +338,27 @@ const Admin = (() => {
     return () => { clearTimeout(t); t = setTimeout(fn, ms); };
   }
 
+  // Reset all data: asks the admin to type RESET first.
+  $("resetAllBtn").addEventListener("click", async () => {
+    const typed = prompt("This deletes ALL uploaded data and review changes for every client. It can't be undone.\n\nType RESET to confirm.");
+    if (typed === null) return;
+    const msg = $("resetMsg");
+    if (typed.trim() !== "RESET") { msg.className = "msg err"; msg.textContent = "Nothing was deleted: you didn't type RESET."; return; }
+    const b = $("resetAllBtn");
+    b.disabled = true;
+    try {
+      const r = await api("POST", "/reset", { confirm: "RESET" });
+      msg.className = "msg ok";
+      msg.textContent = `All data was reset (${r.uploadsDeleted} upload${r.uploadsDeleted === 1 ? "" : "s"} deleted).`;
+      await Promise.all([refreshHistory(), loadMeta(false)]);
+    } catch (e) {
+      msg.className = "msg err";
+      msg.textContent = `Could not reset: ${e.message}`;
+    } finally {
+      b.disabled = false;
+    }
+  });
+
   async function show() {
     try {
       await loadMeta(!busy);

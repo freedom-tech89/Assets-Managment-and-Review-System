@@ -195,6 +195,12 @@ try {
   c = (await api("GET", "/dashboard/client?name=Medha Dongre Mala")).body;
   assert.equal(c.total.current_value, 3000 + 6000 + 1200);
 
+  // Reset all data needs the word RESET, then empties everything but the platform list
+  assert.equal((await api("POST", "/reset", { confirm: "yes" })).status, 400);
+  assert.equal((await api("POST", "/reset", { confirm: "RESET" })).status, 200);
+  assert.equal((await api("GET", "/dashboard")).body.clients.length, 0);
+  assert.ok((await api("GET", "/platforms")).body.length > 0, "platforms kept");
+
   assert.equal((await api("POST", "/logout")).status, 200);
   assert.equal((await api("GET", "/dashboard")).status, 401);
   console.log("All API tests passed.");
