@@ -363,6 +363,7 @@ const Review = (() => {
     sh.deleteRowsFrom(3);
     sh.set("P2", "New SIP");
     const merges = [];
+    const schemeRows = new Map(); // row number -> rowKey of the scheme on it (for the review page)
     let r = 3;
     const start = (kind) => { sh.blankRow(r, attrs[kind], styles[kind]); return r++; };
     const put = (row, kind, values) => {
@@ -413,6 +414,7 @@ const Review = (() => {
         let n = 0;
         for (const h of items) {
           const rr = start("scheme");
+          schemeRows.set(rr, rowKey(h));
           put(rr, "scheme", {
             A: ++n, B: h.security_name || "", C: h._sub ?? subType(h.security_name, h.category), D: h.invested, E: 0, F: h.quantity,
             G: h.current_value, H: 0, I: 0, J: { f: `SUM(G${rr}:I${rr})` }, K: h.xirr, L: h.return_pct ?? pct((h.current_value || 0) - (h.invested || 0), h.invested),
@@ -421,6 +423,7 @@ const Review = (() => {
         }
         for (const s of extraSchemes) {
           const rr = start("scheme");
+          schemeRows.set(rr, rowKey(s));
           put(rr, "scheme", { A: ++n, B: s.security_name || "", C: s._sub ?? subType(s.security_name, null), O: sipBy.get(`${pk}|MF|${schemeKey(s)}`) || null, ...notes(s) });
         }
         const last = r - 1;
@@ -454,6 +457,7 @@ const Review = (() => {
       let n = 0;
       for (const h of hs) {
         const rr = start("item");
+        schemeRows.set(rr, rowKey(h));
         put(rr, "item", { A: ++n, B: h.security_name || "", C: h._sub ?? (h.asset_class || ""), D: h.invested, F: h.quantity, G: h.current_value,
           J: { f: `G${rr}` }, K: h.xirr, L: h.return_pct ?? pct((h.current_value || 0) - (h.invested || 0), h.invested),
           O: sipBy.get(`${pk}|${prod}|${schemeKey(h)}`) || null, ...notes(h) });
@@ -461,6 +465,7 @@ const Review = (() => {
       const held = new Set(hs.map(schemeKey));
       for (const s of new Map(live.filter((x) => x.platform_key === pk && x.product === prod && !held.has(schemeKey(x))).map((x) => [schemeKey(x), x])).values()) {
         const rr = start("item");
+        schemeRows.set(rr, rowKey(s));
         put(rr, "item", { A: ++n, B: s.security_name || "", O: sipBy.get(`${pk}|${prod}|${schemeKey(s)}`) || null, ...notes(s) });
       }
       const last = r - 1;
@@ -487,6 +492,7 @@ const Review = (() => {
       for (const l of loans) put(start("item"), "item", { B: `${l.platform} · ${l.security_name || "Loan"}`, G: l.current_value });
     }
     sh.setMerges(merges);
+    return schemeRows;
   }
 
   // ---- Reviewer's edits -------------------------------------------------------------------
@@ -611,7 +617,27 @@ const Review = (() => {
   // ---- Public ----------------------------------------------------------------------------
   // data: the /api/review response; edits: the reviewer's saved changes. Returns the workbook as an
   // ArrayBuffer (or Node Buffer).
-  async function build(data, template, { output = "arraybuffer", edits = data.edits || {} } = {}) {
+  // Columns of DETAILED PORTFOLIO the review page can change for a scheme, and the field each sets.
+  const DETAIL_FIELDS = { C: "subType", D: "invested", F: "quantity", G: "current_value", K: "xirr", N: "tenure", O: "sip", P: "newSip",
+    T: "remarks", U: "suggestions" };
+
+  // Cells typed in on the review page: {sheet name: {A1: value}}. Formula cells and the scheme
+  // rows of DETAILED PORTFOLIO (which follow the scheme edits instead) are left alone.
+  function applyCells(sheets, cells) {
+    for (const [name, refs] of Object.entries(cells || {})) {
+      const sh = sheets[name];
+      if (!sh || name === "DETAILED PORTFOLIO") continue;
+      for (const [ref, v] of Object.entries(refs)) {
+        const [c, r] = splitRef(ref);
+        const x = sh.rows.get(r)?.cells.get(c);
+        if (x && x.includes("<f")) continue;
+        sh.set(ref, v === null ? "" : v);
+      }
+    }
+  }
+
+  // The filled-in workbook as a JSZip, plus which DETAILED PORTFOLIO row holds which scheme.
+  async function assemble(data, template, edits = data.edits || {}) {
     const zip = await JSZip.loadAsync(template);
     const paths = await sheetPaths(zip);
     const read = async (name) => new Sheet(await zip.file(paths[name]).async("string"));
@@ -633,17 +659,24 @@ const Review = (() => {
     write("SUMMARY PORTFOLIO", summary);
 
     const detailed = await read("DETAILED PORTFOLIO");
-    fillDetailed(detailed, client, now.holdings, now.sips);
+    const schemeRows = fillDetailed(detailed, client, now.holdings, now.sips);
     write("DETAILED PORTFOLIO", detailed);
 
     const blueprint = await read("Freedom Blueprint");
     const discussion = await read("Discussion");
     discussion.set("B3", reviewDate.split("-").reverse().join("-"));
     fillEdits({ journey, blueprint, discussion }, edits, colName(6 + Number(reviewDate.slice(0, 4)) - startYear));
-    write("Portfolio Journey", journey);
-    write("Freedom Blueprint", blueprint);
-    write("Discussion", discussion);
+    const others = { "1": cover, "Portfolio Journey": journey, "SUMMARY PORTFOLIO": summary, "Freedom Blueprint": blueprint, Discussion: discussion };
+    for (const name of Object.keys(edits.cells || {})) {
+      if (!others[name] && paths[name] && name !== "DETAILED PORTFOLIO") others[name] = await read(name);
+    }
+    applyCells(others, edits.cells);
+    for (const [name, sh] of Object.entries(others)) write(name, sh);
+    return { zip, schemeRows };
+  }
 
+  async function build(data, template, { output = "arraybuffer", edits = data.edits || {} } = {}) {
+    const { zip } = await assemble(data, template, edits);
     return zip.generateAsync({ type: output, compression: "DEFLATE" });
   }
 
@@ -666,7 +699,7 @@ const Review = (() => {
     window.download(xlsxBlob(buffer), fileName(data.clientName, date));
   }
 
-  return { build, exportFile, prepare, figures, rowKey, typeOfRow, fileName, Sheet, mfType, subType, num,
+  return { build, assemble, template, DETAIL_FIELDS, exportFile, prepare, figures, rowKey, typeOfRow, fileName, Sheet, mfType, subType, num,
     MF_TYPES, SAVINGS, PASSIVE, REDEMPTION, LEVELS, LOANS };
 })();
 globalThis.Review = Review;

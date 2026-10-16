@@ -1,31 +1,39 @@
-// Review Report page (#/review/<client>): the figures that go into the client review sheet, which
-// the reviewer can correct and add to before exporting. Changes are saved per client on the server
-// (/api/review/edits), apart from the uploaded data, which is never changed. Export builds the
-// Excel file from the uploaded data with these changes applied (public/js/review.js).
+// Review Report page (#/review/<client>): the client review workbook shown as Excel shows it
+// (public/js/sheetview.js), with the same sheets, colours and charts. Cells can be typed into:
+//   - DETAILED PORTFOLIO: a scheme's sub type, invested, units, value, XIRR, SIP, new SIP,
+//     remarks and suggestions (saved per scheme, so totals and the other sheets follow); right-click
+//     a scheme to change its fund type or leave it out.
+//   - Every other sheet: any cell that is not a formula (saved per cell).
+// Changes are saved per client on the server (/api/review/edits), apart from the uploaded data,
+// which is never changed. Export builds the Excel file with them (public/js/review.js).
 const ReviewPage = (() => {
   const view = $("dashView");
   const enc = encodeURIComponent;
   const SAVE_DELAY = 700;
+  const DETAILED = "DETAILED PORTFOLIO";
+  const NUMBER_FIELDS = new Set(["invested", "quantity", "current_value", "xirr", "sip", "newSip"]);
 
-  let data = null;      // /api/review response
-  let edits = {};       // the reviewer's changes, saved as they type
-  let rows = [];        // one line per scheme: uploaded figures
-  let saveTimer = null, saving = null, dirty = false, active = false;
+  let data = null, edits = {}, wb = null, schemeRows = new Map(), names = new Map();
+  let sheetName = null, sel = null, editor = null, active = false, building = null, pending = false;
+  let saveTimer = null, saving = null, dirty = false;
+  let zoom = Number(store("xlZoom")) || 0.9;
+
+  function store(k, v) {
+    try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch { return null; }
+    return null;
+  }
 
   const isNum = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
-  const same = (a, b) => (isNum(a) && isNum(b) ? Math.abs(Number(a) - Number(b)) < 0.005 : String(a ?? "") === String(b ?? ""));
-  const roundTo = (v, d = 2) => (isNum(v) ? Math.round(Number(v) * 10 ** d) / 10 ** d : "");
-  const sum = (list, f) => list.reduce((a, r) => a + (r[f] || 0), 0);
 
   // ---- Saving -----------------------------------------------------------------------------
   function setStatus(text, cls = "") {
-    const el = $("rvStatus");
-    if (el) { el.textContent = text; el.className = `rv-status ${cls}`; }
+    const el = $("xlStatus");
+    if (el) { el.textContent = text; el.className = `xl-status ${cls}`; }
   }
 
   function scheduleSave() {
     dirty = true;
-    setStatus("Unsaved changes…");
+    setStatus("Saving…");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, SAVE_DELAY);
   }
@@ -35,242 +43,10 @@ const ReviewPage = (() => {
     if (!dirty) return saving;
     dirty = false;
     const client = data.clientName;
-    setStatus("Saving…");
     saving = api("PUT", `/review/edits?client=${enc(client)}`, { edits: clean(edits) })
-      .then((r) => { if (data?.clientName === client && !dirty) setStatus(`All changes saved · ${time(r.savedAt)}`, "ok"); })
+      .then(() => { if (data?.clientName === client && !dirty) setStatus("All changes saved", "ok"); })
       .catch((e) => { dirty = true; setStatus(`Not saved: ${e.message}`, "err"); throw e; });
     return saving;
-  }
-
-  const time = (iso) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-
-  // Drop empty values so the saved document only holds real changes.
-  function clean(o) {
-    if (Array.isArray(o) || o === null || typeof o !== "object") return o;
-    const out = {};
-    for (const [k, v] of Object.entries(o)) {
-      const c = clean(v);
-      if (c === undefined || c === null || c === "" || c === false) continue;
-      if (typeof c === "object" && !Object.keys(c).length) continue;
-      out[k] = c;
-    }
-    return out;
-  }
-
-  // Read / write a value at a dotted path inside edits ("personal.mobile", "savings.epf.value").
-  const getPath = (path) => path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), edits);
-  function setPath(path, value) {
-    const keys = path.split(".");
-    let o = edits;
-    for (const k of keys.slice(0, -1)) o = o[k] && typeof o[k] === "object" ? o[k] : (o[k] = {});
-    const last = keys[keys.length - 1];
-    if (value === undefined || value === "" || value === false) delete o[last]; else o[last] = value;
-  }
-  const schemeEdit = (key) => ((edits.schemes ||= {})[key] ||= {});
-
-  // ---- Scheme lines -------------------------------------------------------------------------
-  // The latest uploaded holdings and live SIPs, one line per scheme on each platform.
-  function schemeRows(prep) {
-    const map = new Map();
-    const line = (r) => {
-      const k = Review.rowKey(r);
-      if (!map.has(k)) {
-        map.set(k, { key: k, platform: r.platform, product: r.product, name: r.security_name || "–", isin: r.isin, category: r.category,
-          holdings: [], sips: [] });
-      }
-      return map.get(k);
-    };
-    for (const h of prep.raw.holdings) line(h).holdings.push(h);
-    for (const s of prep.raw.sips.filter((x) => x.live)) line(s).sips.push(s);
-    const order = ["MF", "Stocks", "PMS", "AIF", "Bonds", "Other", "LAS"];
-    return [...map.values()].map((r) => {
-      const h = r.holdings;
-      const inv = sum(h, "invested"), val = sum(h, "current_value");
-      return {
-        ...r,
-        base: {
-          type: r.product === "MF" ? Review.typeOfRow(h[0] || r.sips[0]) : "",
-          subType: Review.subType(r.name, r.category),
-          quantity: h.length ? roundTo(sum(h, "quantity"), 3) : "",
-          invested: h.length ? roundTo(inv) : "",
-          current_value: h.length ? roundTo(val) : "",
-          xirr: h.length === 1 && isNum(h[0].xirr) ? roundTo(h[0].xirr) : "",
-          sip: r.sips.length ? roundTo(sum(r.sips, "monthly_amount")) : "",
-        },
-      };
-    }).sort((a, b) => order.indexOf(a.product) - order.indexOf(b.product) || a.platform.localeCompare(b.platform)
-      || (a.base.type || "").localeCompare(b.base.type || "") || b.base.current_value - a.base.current_value);
-  }
-
-  // ---- Rendering ------------------------------------------------------------------------------
-  async function show(name) {
-    active = false;
-    await flush();
-    view.innerHTML = '<div class="loading">Loading…</div>';
-    try {
-      data = await api("GET", `/review?client=${enc(name)}`);
-    } catch (e) {
-      data = null;
-      view.innerHTML = `<nav class="crumbs"><a href="#/dashboard">Dashboard</a></nav>
-        <div class="card empty-state"><h2>Couldn't load the review report</h2><p>${esc(e.message)}</p></div>`;
-      return;
-    }
-    edits = data.edits && typeof data.edits === "object" ? structuredClone(data.edits) : {};
-    dirty = false;
-    rows = schemeRows(Review.prepare(data, {}));
-    active = true;
-    render();
-  }
-
-  function render() {
-    const c = data.clientName;
-    view.innerHTML = `<nav class="crumbs"><a href="#/dashboard">Dashboard</a><span class="sep">›</span>
-        <a href="#/client/${enc(c)}">${esc(c)}</a><span class="sep">›</span><span>Review Report</span></nav>
-      <div class="page-head"><div><h1>Review Report · ${esc(c)}</h1>
-        <div class="sub">Change any figure below for this review. The uploaded data stays as it is; your changes are saved for this client and go into the exported Excel.</div></div>
-        <div class="actions">
-          <span id="rvStatus" class="rv-status ${data.editsSavedAt ? "ok" : ""}">${data.editsSavedAt ? `Changes saved · ${fmt.date(data.editsSavedAt.slice(0, 10))}` : "No changes yet"}</span>
-          <button type="button" class="outline" id="rvReset">Reset changes</button>
-          <button type="button" class="success" id="rvExport">Export Excel</button>
-        </div></div>
-      <div id="rvKpis"></div>
-      <div class="card">
-        <h3 class="section-title">Review details</h3>
-        <div class="rv-grid">
-          ${field("Review date", "reviewDate", { type: "date", placeholder: data.today, value: edits.reviewDate || data.today })}
-          ${field("Mobile", "personal.mobile")}
-          ${field("E-mail", "personal.email", { type: "email" })}
-          ${field("Occupation", "personal.occupation")}
-          ${field("Date of birth", "personal.dob", { type: "date" })}
-          ${field("City", "personal.city")}
-          ${field("Country", "personal.country")}
-          ${field("Relationship manager", "personal.rm")}
-          ${field("Years with us", "personal.years", { type: "number", min: 0 })}
-          <label>Freedom level<select data-path="personal.level"><option value="">–</option>
-            ${Review.LEVELS.map((l) => `<option ${edits.personal?.level === l ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-        </div>
-      </div>
-      <div class="card">
-        <div class="toolbar"><h3 class="section-title" style="margin:0">Investments</h3>
-          <span class="muted small">Edited cells are highlighted. Clear a cell to go back to the uploaded figure. Untick a scheme to leave it out of the report.</span></div>
-        <div class="table-wrap"><table class="rv-table" id="rvSchemes">${schemeTable()}</table></div>
-      </div>
-      <div class="two-col rv-two">
-        <div class="card"><h3 class="section-title">Other savings</h3>
-          <table class="rv-table"><thead><tr><th>Saving</th><th class="num">Current value (₹)</th><th class="num">Monthly (₹)</th></tr></thead><tbody>
-          ${Review.SAVINGS.map(([k, label, , mr]) => `<tr><td>${k === "other"
-            ? `<input class="rv-label" data-path="otherLabel" value="${esc(edits.otherLabel || "")}" placeholder="${esc(label)}">` : esc(label)}</td>
-            <td class="num">${numInput(`savings.${k}.value`)}</td><td class="num">${mr ? numInput(`savings.${k}.monthly`) : ""}</td></tr>`).join("")}
-          </tbody></table></div>
-        <div>
-          <div class="card"><h3 class="section-title">Passive income (monthly)</h3>
-            <table class="rv-table"><tbody>
-            ${Review.PASSIVE.map(([k, label]) => `<tr><td>${esc(label)}</td><td class="num">${numInput(`passive.${k}`)}</td></tr>`).join("")}
-            </tbody></table></div>
-          <div class="card"><h3 class="section-title">Redemptions this year</h3>
-            <table class="rv-table"><thead><tr><th></th><th class="num">Amount (₹)</th><th>Reason</th></tr></thead><tbody>
-            ${Review.REDEMPTION.map(([k, label]) => `<tr><td>${esc(label)}</td><td class="num">${numInput(`redemption.${k}.value`)}</td>
-              <td><input data-path="redemption.${k}.reason" value="${esc(getPath(`redemption.${k}.reason`) || "")}"></td></tr>`).join("")}
-            </tbody></table></div>
-        </div>
-      </div>
-      <div class="card"><h3 class="section-title">Discussion notes</h3>
-        <p class="muted small" style="margin:-6px 0 8px">One point per line. They go into the Discussion sheet.</p>
-        <textarea data-path="notes" rows="7" class="rv-notes" placeholder="e.g. Increase the NJ equity SIP by ₹5,000 from next month">${esc(edits.notes || "")}</textarea>
-      </div>`;
-    kpis();
-    $("rvExport").addEventListener("click", exportNow);
-    $("rvReset").addEventListener("click", reset);
-  }
-
-  function field(label, path, { type = "text", placeholder = "", value, ...attrs } = {}) {
-    const v = value ?? getPath(path) ?? "";
-    const extra = Object.entries(attrs).map(([k, x]) => `${k}="${esc(x)}"`).join(" ");
-    return `<label>${esc(label)}<input type="${type}" data-path="${path}" value="${esc(v)}" placeholder="${esc(placeholder)}" ${extra}></label>`;
-  }
-  const numInput = (path) => `<input type="number" step="any" class="rv-num" data-path="${path}" value="${esc(getPath(path) ?? "")}">`;
-
-  function schemeTable() {
-    let html = `<thead><tr><th title="Include in the report">In</th><th>Scheme</th><th>Fund type</th><th>Sub type</th>
-      <th class="num">Units</th><th class="num">Invested (₹)</th><th class="num">Current value (₹)</th><th class="num">XIRR %</th>
-      <th class="num">Monthly SIP (₹)</th><th>SIP tenure</th><th class="num">New SIP (₹)</th><th>Remarks</th><th>Suggestions</th></tr></thead><tbody>`;
-    let group = "";
-    for (const r of rows) {
-      const g = `${r.product} · ${r.platform}`;
-      if (g !== group) {
-        group = g;
-        html += `<tr class="grp"><td colspan="13">${esc(r.product === "LAS" ? `${g} (loan, not counted in the total)` : g)}</td></tr>`;
-      }
-      const e = edits.schemes?.[r.key] || {};
-      const hasHolding = r.holdings.length > 0;
-      const cell = (f, { digits = 2, disabled = false } = {}) => {
-        const v = e[f] !== undefined ? e[f] : r.base[f];
-        return `<td class="num"><input type="number" step="any" class="rv-num ${e[f] !== undefined ? "edited" : ""}" data-key="${esc(r.key)}"
-          data-field="${f}" value="${esc(v === "" ? "" : roundTo(v, digits))}" placeholder="–" ${disabled ? "disabled" : ""}></td>`;
-      };
-      const text = (f, cls = "") => `<td><input class="${cls} ${e[f] ? "edited" : ""}" data-key="${esc(r.key)}" data-field="${f}" value="${esc(e[f] || "")}"></td>`;
-      const type = e.type || r.base.type;
-      html += `<tr class="${e.excluded ? "excluded" : ""}" data-row="${esc(r.key)}">
-        <td><input type="checkbox" data-key="${esc(r.key)}" data-field="included" ${e.excluded ? "" : "checked"} aria-label="Include ${esc(r.name)}"></td>
-        <td class="scheme">${esc(r.name)}${r.isin ? `<span class="note">${esc(r.isin)}</span>` : ""}${hasHolding ? "" : '<span class="note">SIP only</span>'}</td>
-        <td>${r.product === "MF" ? `<select data-key="${esc(r.key)}" data-field="type" class="${e.type ? "edited" : ""}">
-          ${Review.MF_TYPES.map((t) => `<option ${t === type ? "selected" : ""}>${t}</option>`).join("")}</select>` : '<span class="muted">–</span>'}</td>
-        <td><input class="rv-sub ${e.subType ? "edited" : ""}" data-key="${esc(r.key)}" data-field="subType" value="${esc(e.subType || "")}" placeholder="${esc(r.base.subType || "–")}"></td>
-        ${cell("quantity", { digits: 3, disabled: !hasHolding })}${cell("invested", { disabled: !hasHolding })}
-        ${cell("current_value", { disabled: !hasHolding })}${cell("xirr", { disabled: !hasHolding })}
-        ${cell("sip")}${text("tenure", "rv-short")}
-        <td class="num"><input type="number" step="any" class="rv-num ${isNum(e.newSip) ? "edited" : ""}" data-key="${esc(r.key)}" data-field="newSip" value="${esc(e.newSip ?? "")}"></td>
-        ${text("remarks")}${text("suggestions")}</tr>`;
-    }
-    return `${html}</tbody>`;
-  }
-
-  // Totals with the changes applied, against the uploaded ones.
-  function kpis() {
-    const now = Review.prepare(data, edits).current;
-    const was = Review.prepare(data, {}).current;
-    const gain = now.value - now.invested;
-    const diff = (a, b) => (same(a, b) ? "" : `<span class="note">Uploaded: ${fmt.money(b)}</span>`);
-    $("rvKpis").innerHTML = `<div class="kpis">
-      <div class="kpi"><div class="l">Current value</div><div class="v">${fmt.money(now.value)}</div>${diff(now.value, was.value)}</div>
-      <div class="kpi" style="--c:#6b7a99"><div class="l">Invested</div><div class="v">${fmt.money(now.invested)}</div>${diff(now.invested, was.invested)}</div>
-      <div class="kpi" style="--c:${gain >= 0 ? "#1e8e5a" : "#c0392b"}"><div class="l">Gain</div><div class="v ${fmt.signCls(gain)}">${fmt.money(gain)}</div>
-        <div class="s">${fmt.pct(now.invested ? (gain / now.invested) * 100 : null)}</div></div>
-      <div class="kpi" style="--c:#d4880f"><div class="l">Monthly SIP</div><div class="v">${fmt.money(now.sip)}</div>${diff(now.sip, was.sip)}</div>
-    </div>`;
-  }
-
-  // ---- Changes ----------------------------------------------------------------------------------
-  function onInput(e) {
-    const el = e.target;
-    if (!active || !data || !(el.dataset.path || el.dataset.key)) return;
-    if (e.type === "input" && (el.tagName === "SELECT" || el.type === "checkbox")) return; // handled on change
-    if (el.dataset.path) {
-      let v = el.type === "number" ? (isNum(el.value) ? Number(el.value) : undefined) : el.value;
-      if (el.dataset.path === "reviewDate" && (v === data.today || !v)) v = undefined;
-      setPath(el.dataset.path, v);
-    } else {
-      const r = rows.find((x) => x.key === el.dataset.key);
-      const f = el.dataset.field;
-      const s = schemeEdit(r.key);
-      if (f === "included") {
-        if (el.checked) delete s.excluded; else s.excluded = true;
-        el.closest("tr").classList.toggle("excluded", !el.checked);
-      } else if (f in r.base && f !== "subType") {
-        // Same as uploaded (or cleared): no change.
-        const raw = f === "type" ? el.value : (isNum(el.value) ? Number(el.value) : undefined);
-        if (raw === undefined || same(raw, r.base[f])) delete s[f]; else s[f] = raw;
-        if (raw === undefined && el.type === "number" && e.type === "change") el.value = r.base[f] === "" ? "" : r.base[f];
-        el.classList.toggle("edited", s[f] !== undefined);
-      } else {
-        const v = el.type === "number" ? (isNum(el.value) ? Number(el.value) : undefined) : el.value.trim() || undefined;
-        if (v === undefined) delete s[f]; else s[f] = v;
-        el.classList.toggle("edited", v !== undefined);
-      }
-      if (!Object.keys(s).length) delete edits.schemes[r.key];
-    }
-    kpis();
-    scheduleSave();
   }
 
   async function flush() {
@@ -278,8 +54,363 @@ const ReviewPage = (() => {
     try { if (dirty) await save(); else await saving; } catch {}
   }
 
+  // Drop empty objects so the saved document only holds real changes. Cell values of "" are kept:
+  // they mean the reviewer cleared that cell.
+  function clean(o, isCells = false) {
+    if (Array.isArray(o) || o === null || typeof o !== "object") return o;
+    const out = {};
+    for (const [k, v] of Object.entries(o)) {
+      const c = clean(v, isCells || k === "cells");
+      if (c === undefined || c === false || (c === "" && !isCells) || c === null) continue;
+      if (typeof c === "object" && !Object.keys(c).length) continue;
+      out[k] = c;
+    }
+    return out;
+  }
+
+  // ---- Page ---------------------------------------------------------------------------------
+  async function show(name) {
+    active = false;
+    await flush();
+    document.body.classList.add("xl-mode");
+    view.innerHTML = '<div class="loading">Loading the review sheet…</div>';
+    try {
+      data = await api("GET", `/review?client=${enc(name)}`);
+    } catch (e) {
+      data = null;
+      view.innerHTML = `<div class="xl-error"><nav class="crumbs"><a href="#/dashboard">Dashboard</a></nav>
+        <div class="card empty-state"><h2>Couldn't load the review report</h2><p>${esc(e.message)}</p></div></div>`;
+      return;
+    }
+    edits = data.edits && typeof data.edits === "object" ? structuredClone(data.edits) : {};
+    dirty = false;
+    sel = null;
+    const prep = Review.prepare(data, {});
+    names = new Map([...prep.raw.holdings, ...prep.raw.sips].map((r) => [Review.rowKey(r), r.security_name || "Scheme"]));
+    shell();
+    active = true;
+    await rebuild();
+  }
+
+  function shell() {
+    const c = data.clientName;
+    view.innerHTML = `<div class="xl-app">
+      <div class="xl-bar">
+        <a class="xl-back" href="#/client/${enc(c)}" title="Back to ${esc(c)}">‹</a>
+        <div class="xl-title"><b>Review Sheet of ${esc(c)}</b><span>Click a cell to change it. Right-click a scheme for more.</span></div>
+        <label class="xl-date">Review date <input type="date" id="xlDate" value="${esc(edits.reviewDate || data.today)}"></label>
+        <span id="xlStatus" class="xl-status ${data.editsSavedAt ? "ok" : ""}">${data.editsSavedAt ? "Changes saved" : "No changes yet"}</span>
+        <button type="button" class="xl-btn" id="xlReset">Reset changes</button>
+        <button type="button" class="xl-btn xl-export" id="xlExport">Export Excel</button>
+      </div>
+      <div class="xl-fx"><span id="xlName" class="xl-name"></span><span class="xl-fxl">fx</span><input id="xlFx" autocomplete="off" spellcheck="false"></div>
+      <div id="xlHost" class="xl-host" tabindex="0"></div>
+      <div class="xl-foot">
+        <div id="xlTabs" class="xl-tabs" role="tablist"></div>
+        <button type="button" id="xlOut" class="xl-out" hidden></button>
+        <div class="xl-zoom"><button type="button" data-zoom="-1" aria-label="Zoom out">−</button><span id="xlZoom"></span><button type="button" data-zoom="1" aria-label="Zoom in">+</button></div>
+      </div>
+      <div id="xlMenu" class="xl-menu" hidden></div>
+    </div>`;
+    $("xlExport").addEventListener("click", exportNow);
+    $("xlReset").addEventListener("click", reset);
+    $("xlDate").addEventListener("change", (e) => {
+      const v = e.target.value;
+      if (v && v !== data.today) edits.reviewDate = v; else delete edits.reviewDate;
+      changed();
+    });
+    $("xlFx").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); if (sel) commit(sel.r, sel.c, $("xlFx").value, { r: 1, c: 0 }); $("xlHost").focus(); }
+      if (e.key === "Escape") { showSelection(); $("xlHost").focus(); }
+    });
+    view.querySelectorAll("[data-zoom]").forEach((b) => b.addEventListener("click", () => {
+      zoom = Math.min(2, Math.max(0.4, Math.round((zoom + Number(b.dataset.zoom) * 0.1) * 10) / 10));
+      store("xlZoom", zoom);
+      draw();
+    }));
+    $("xlOut").addEventListener("click", (e) => leftOutMenu(e));
+    const host = $("xlHost");
+    host.addEventListener("click", (e) => {
+      const td = e.target.closest("td[data-r]");
+      if (td) select(Number(td.dataset.r), Number(td.dataset.c));
+    });
+    host.addEventListener("dblclick", (e) => {
+      const td = e.target.closest("td[data-r]");
+      if (td) { select(Number(td.dataset.r), Number(td.dataset.c)); openEditor(); }
+    });
+    host.addEventListener("contextmenu", (e) => {
+      const td = e.target.closest("td[data-r]");
+      if (!td) return;
+      e.preventDefault();
+      select(Number(td.dataset.r), Number(td.dataset.c));
+      cellMenu(e);
+    });
+    host.addEventListener("keydown", onKey);
+  }
+
+  // Rebuilds the workbook from the uploaded data and the edits, and shows it again.
+  async function rebuild() {
+    if (building) { pending = true; return building; }
+    const host = $("xlHost");
+    host?.classList.add("busy");
+    building = (async () => {
+      try {
+        const out = await Review.assemble(data, await Review.template(), clean(edits));
+        schemeRows = out.schemeRows;
+        wb = await SheetView.load(out.zip);
+        if (!sheetName || !wb.sheets.some((s) => s.name === sheetName && !s.hidden)) {
+          const remembered = store("xlSheet");
+          sheetName = wb.sheets.some((s) => s.name === remembered && !s.hidden) ? remembered
+            : wb.sheets.find((s) => s.name === "Summary")?.name || wb.sheets.find((s) => !s.hidden).name;
+        }
+        if (active) { tabs(); draw(); leftOut(); }
+      } catch (e) {
+        if (active) host.innerHTML = `<div class="card empty-state"><h2>Couldn't build the review sheet</h2><p>${esc(e.message)}</p></div>`;
+      } finally {
+        host?.classList.remove("busy");
+      }
+    })();
+    await building;
+    building = null;
+    if (pending) { pending = false; await rebuild(); }
+  }
+
+  function tabs() {
+    $("xlTabs").innerHTML = wb.sheets.filter((s) => !s.hidden).map((s) =>
+      `<button type="button" role="tab" class="xl-tab ${s.name === sheetName ? "on" : ""}" data-sheet="${esc(s.name)}" aria-selected="${s.name === sheetName}">${esc(s.name)}</button>`).join("");
+    $("xlTabs").querySelectorAll("[data-sheet]").forEach((b) => b.addEventListener("click", () => {
+      sheetName = b.dataset.sheet;
+      store("xlSheet", sheetName);
+      sel = null;
+      tabs();
+      draw(true);
+    }));
+  }
+
+  function draw(top = false) {
+    const host = $("xlHost");
+    const scroll = top ? { x: 0, y: 0 } : { x: host.scrollLeft, y: host.scrollTop };
+    SheetView.render(wb, sheetName, host, { zoom, isEdited, isEditable });
+    host.scrollLeft = scroll.x;
+    host.scrollTop = scroll.y;
+    $("xlZoom").textContent = `${Math.round(zoom * 100)}%`;
+    showSelection();
+  }
+
+  // ---- Which cells can change -----------------------------------------------------------------
+  const field = (r, c) => (sheetName === DETAILED && schemeRows.has(r) ? Review.DETAIL_FIELDS[SheetView.colName(c)] : null);
+  function isEditable(r, c) {
+    if (sheetName === DETAILED) return !!field(r, c);
+    const x = wb.raw(sheetName, r, c);
+    return !x || !x.f;
+  }
+  function isEdited(r, c) {
+    if (sheetName === DETAILED) {
+      const f = field(r, c);
+      return !!f && edits.schemes?.[schemeRows.get(r)]?.[f] !== undefined;
+    }
+    return edits.cells?.[sheetName]?.[SheetView.refOf(r, c)] !== undefined;
+  }
+
+  // ---- Selection and typing -------------------------------------------------------------------
+  function select(r, c) {
+    sel = { r, c };
+    showSelection();
+  }
+
+  function rawText(r, c) {
+    const x = wb.raw(sheetName, r, c);
+    if (!x) return "";
+    if (x.f) return `=${x.f}`;
+    if (x.v === null || x.v === undefined) return "";
+    if (typeof x.v === "number") {
+      const st = wb.xf(wb.sheet(sheetName), r, c);
+      if (/[dy]/i.test(st.fmt.replace(/"[^"]*"|\[[^\]]*\]/g, "")) && !/[0#]/.test(st.fmt)) return SheetView.format(x.v, "dd-mm-yyyy").text;
+      if (/%/.test(st.fmt)) return `${Math.round(x.v * 1e6) / 1e4}%`;
+      return String(Math.round(x.v * 1e4) / 1e4);
+    }
+    return typeof x.v === "object" ? x.v.e || "" : String(x.v);
+  }
+
+  function showSelection() {
+    const host = $("xlHost");
+    if (!host) return;
+    host.querySelectorAll(".xl-sel").forEach((x) => x.classList.remove("xl-sel"));
+    if (!sel) { $("xlName").textContent = ""; $("xlFx").value = ""; $("xlFx").readOnly = true; return; }
+    const td = host.querySelector(`td[data-r="${sel.r}"][data-c="${sel.c}"]`);
+    if (td) td.classList.add("xl-sel");
+    $("xlName").textContent = SheetView.refOf(sel.r, sel.c);
+    $("xlFx").value = rawText(sel.r, sel.c);
+    $("xlFx").readOnly = !isEditable(sel.r, sel.c);
+    $("xlFx").title = isEditable(sel.r, sel.c) ? "" : readOnlyReason(sel.r, sel.c);
+  }
+
+  function readOnlyReason(r) {
+    if (sheetName === DETAILED) return schemeRows.has(r) ? "This column is worked out from the others." : "Totals and headings are worked out from the schemes.";
+    return "This cell is a formula and is worked out from other cells.";
+  }
+
+  function move(dr, dc) {
+    if (!sel) return;
+    const r = Math.max(1, sel.r + dr), c = Math.max(1, sel.c + dc);
+    // Skip hidden rows and columns.
+    const host = $("xlHost");
+    let rr = r, cc = c;
+    for (let i = 0; i < 50 && !host.querySelector(`td[data-r="${rr}"][data-c="${cc}"]`); i++) { rr += dr; cc += dc; if (rr < 1 || cc < 1) return; }
+    if (!host.querySelector(`td[data-r="${rr}"][data-c="${cc}"]`)) return;
+    select(rr, cc);
+    host.querySelector(".xl-sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  function onKey(e) {
+    if (editor || !sel) return;
+    const k = e.key;
+    const arrows = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1], Tab: [0, e.shiftKey ? -1 : 1], Enter: [1, 0] };
+    if (k === "F2") { e.preventDefault(); openEditor(); return; }
+    if (arrows[k]) { e.preventDefault(); move(...arrows[k]); return; }
+    if (k === "Delete" || k === "Backspace") { e.preventDefault(); commit(sel.r, sel.c, ""); return; }
+    if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); openEditor(k); }
+  }
+
+  function openEditor(initial) {
+    if (!sel) return;
+    if (!isEditable(sel.r, sel.c)) { setStatus(readOnlyReason(sel.r, sel.c), "warn"); return; }
+    const td = $("xlHost").querySelector(`td[data-r="${sel.r}"][data-c="${sel.c}"]`);
+    if (!td) return;
+    const rect = td.getBoundingClientRect();
+    closeEditor(false);
+    const { r, c } = sel;
+    const input = document.createElement("input");
+    input.className = "xl-editor";
+    input.value = initial !== undefined ? initial : rawText(r, c);
+    Object.assign(input.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${Math.max(rect.width, 120)}px`, height: `${Math.max(rect.height, 22)}px` });
+    document.body.appendChild(input);
+    editor = { input, r, c };
+    input.focus();
+    if (initial === undefined) input.select();
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); closeEditor(true, { r: 1, c: 0 }); }
+      else if (e.key === "Tab") { e.preventDefault(); closeEditor(true, { r: 0, c: e.shiftKey ? -1 : 1 }); }
+      else if (e.key === "Escape") { e.preventDefault(); closeEditor(false); }
+    });
+    input.addEventListener("blur", () => closeEditor(true));
+  }
+
+  function closeEditor(keep, step) {
+    if (!editor) return;
+    const { input, r, c } = editor;
+    editor = null;
+    input.remove();
+    $("xlHost")?.focus({ preventScroll: true });
+    if (keep && input.value !== rawText(r, c)) commit(r, c, input.value, step);
+    else if (step) move(step.r, step.c);
+  }
+
+  // What the reviewer typed, as a number, date serial or text.
+  function parseInput(text, r, c) {
+    const t = String(text).trim();
+    if (t === "") return "";
+    if (t.startsWith("=")) return { error: "Formulas can't be typed here; type the value instead." };
+    const n = t.replace(/[₹,\s]/g, "").replace(/^rs\.?/i, "");
+    if (/^-?\d*\.?\d+%$/.test(n)) return Number(n.slice(0, -1)) / 100;
+    if (/^-?\d*\.?\d+$/.test(n)) return Number(n);
+    const st = wb.xf(wb.sheet(sheetName), r, c);
+    const d = /^(\d{1,2})[-/. ](\d{1,2}|[A-Za-z]{3,})[-/. ](\d{2,4})$/.exec(t) || null;
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+    if (iso) return SheetView.toSerial(new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3])));
+    if (d && (/[dmy]/i.test(st.fmt) || /[A-Za-z]/.test(d[2]))) {
+      const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+      const m = /^\d+$/.test(d[2]) ? Number(d[2]) : months.indexOf(d[2].slice(0, 3).toLowerCase()) + 1;
+      const y = d[3].length === 2 ? 2000 + Number(d[3]) : Number(d[3]);
+      if (m >= 1 && m <= 12) return SheetView.toSerial(new Date(Date.UTC(y, m - 1, Number(d[1]))));
+    }
+    return t;
+  }
+
+  async function commit(r, c, text, step) {
+    if (!isEditable(r, c)) { setStatus(readOnlyReason(r, c), "warn"); return; }
+    const v = parseInput(text, r, c);
+    if (v && typeof v === "object") { setStatus(v.error, "warn"); return; }
+    if (sheetName === DETAILED) {
+      const f = field(r, c), k = schemeRows.get(r);
+      const s = ((edits.schemes ||= {})[k] ||= {});
+      if (v === "") delete s[f];
+      else if (NUMBER_FIELDS.has(f)) {
+        if (typeof v !== "number") { setStatus("Type a number in this column.", "warn"); return; }
+        s[f] = f === "xirr" && /%/.test(text) ? v * 100 : v;
+      } else s[f] = String(typeof v === "number" ? text.trim() : v);
+      if (!Object.keys(s).length) delete edits.schemes[k];
+    } else {
+      ((edits.cells ||= {})[sheetName] ||= {})[SheetView.refOf(r, c)] = v;
+    }
+    if (step) move(step.r, step.c);
+    changed();
+  }
+
+  function changed() {
+    scheduleSave();
+    rebuild();
+  }
+
+  // ---- Right-click menu -------------------------------------------------------------------------
+  function hideMenu() { const m = $("xlMenu"); if (m) m.hidden = true; }
+
+  function openMenu(e, items) {
+    const m = $("xlMenu");
+    if (!items.length) return;
+    m.innerHTML = items.map((it, i) => (it === "-" ? '<hr>' : it.head ? `<div class="xl-mh">${esc(it.head)}</div>`
+      : `<button type="button" data-i="${i}" ${it.on ? 'class="on"' : ""}>${esc(it.label)}</button>`)).join("");
+    m.hidden = false;
+    const w = m.offsetWidth, h = m.offsetHeight;
+    m.style.left = `${Math.min(e.clientX, innerWidth - w - 8)}px`;
+    m.style.top = `${Math.min(e.clientY, innerHeight - h - 8)}px`;
+    m.querySelectorAll("[data-i]").forEach((b) => b.addEventListener("click", () => { hideMenu(); items[Number(b.dataset.i)].run(); }));
+  }
+
+  function cellMenu(e) {
+    const { r, c } = sel;
+    const items = [];
+    if (isEditable(r, c)) items.push({ label: "Change this cell…", run: () => openEditor() });
+    if (isEdited(r, c)) {
+      items.push({ label: "Undo my change to this cell", run: () => {
+        if (sheetName === DETAILED) { const s = edits.schemes[schemeRows.get(r)]; delete s[field(r, c)]; if (!Object.keys(s).length) delete edits.schemes[schemeRows.get(r)]; }
+        else { delete edits.cells[sheetName][SheetView.refOf(r, c)]; }
+        changed();
+      } });
+    }
+    if (sheetName === DETAILED && schemeRows.has(r)) {
+      const k = schemeRows.get(r);
+      const s = edits.schemes?.[k] || {};
+      if (k.split("|")[1] === "MF") {
+        items.push("-", { head: `Fund type of ${names.get(k) || "this scheme"}` });
+        for (const t of Review.MF_TYPES) {
+          items.push({ label: t, on: s.type === t, run: () => { const x = ((edits.schemes ||= {})[k] ||= {}); x.type = t; changed(); } });
+        }
+        if (s.type) items.push({ label: "As uploaded", run: () => { delete edits.schemes[k].type; if (!Object.keys(edits.schemes[k]).length) delete edits.schemes[k]; changed(); } });
+      }
+      items.push("-", { label: "Leave this scheme out of the report", run: () => { ((edits.schemes ||= {})[k] ||= {}).excluded = true; changed(); } });
+      if (Object.keys(s).length) items.push({ label: "Undo all changes to this scheme", run: () => { delete edits.schemes[k]; changed(); } });
+    }
+    if (!items.length) items.push({ head: readOnlyReason(r, c) });
+    openMenu(e, items);
+  }
+
+  const leftOutKeys = () => Object.entries(edits.schemes || {}).filter(([, s]) => s.excluded).map(([k]) => k);
+  function leftOut() {
+    const b = $("xlOut");
+    const ks = leftOutKeys();
+    b.hidden = !ks.length;
+    b.textContent = `${ks.length} scheme${ks.length === 1 ? "" : "s"} left out ▾`;
+  }
+  function leftOutMenu(e) {
+    const items = [{ head: "Bring a scheme back into the report" }];
+    for (const k of leftOutKeys()) items.push({ label: names.get(k) || k, run: () => { delete edits.schemes[k].excluded; if (!Object.keys(edits.schemes[k]).length) delete edits.schemes[k]; changed(); } });
+    openMenu(e, items);
+  }
+
+  // ---- Export and reset -------------------------------------------------------------------------
   async function exportNow() {
-    const b = $("rvExport");
+    const b = $("xlExport");
     b.disabled = true;
     b.textContent = "Preparing…";
     try {
@@ -294,26 +425,28 @@ const ReviewPage = (() => {
   }
 
   async function reset() {
-    if (!confirm(`Remove every change made for ${data.clientName}'s review? The report goes back to the uploaded figures.`)) return;
+    if (!confirm(`Remove every change made to ${data.clientName}'s review sheet? It goes back to the uploaded figures.`)) return;
     clearTimeout(saveTimer);
     dirty = false;
     try {
       await api("DELETE", `/review/edits?client=${enc(data.clientName)}`);
     } catch (e) { return alert(`Could not reset: ${e.message}`); }
     edits = {};
-    data.editsSavedAt = null;
-    render();
+    $("xlDate").value = data.today;
     setStatus("Changes removed", "ok");
+    await rebuild();
   }
 
   // Leaving the page (another route) saves what is pending.
   function leave() {
+    document.body.classList.remove("xl-mode");
+    closeEditor(true);
+    hideMenu();
     if (!active) return;
     active = false;
     flush();
   }
-  view.addEventListener("input", onInput);
-  view.addEventListener("change", onInput);
+  document.addEventListener("mousedown", (e) => { if (!e.target.closest("#xlMenu")) hideMenu(); });
   window.addEventListener("beforeunload", (e) => { if (dirty) { save().catch(() => {}); e.preventDefault(); } });
 
   return { show, leave };

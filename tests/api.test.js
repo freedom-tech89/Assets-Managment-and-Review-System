@@ -169,6 +169,13 @@ try {
   const book2 = await mod.exports.loadAsync(await Review.build(rv2, fs.readFileSync(path.join(ROOT, "public/templates/client-review.xlsx")), { output: "nodebuffer" }));
   const all2 = (await Promise.all(Object.keys(book2.files).filter((f) => f.startsWith("xl/worksheets/sheet")).map((f) => book2.file(f).async("string")))).join("");
   for (const v of ["777777", "Checked with RM", "9800011122", "Move ₹5,000 to debt"]) assert.ok(all2.includes(v), `export has ${v}`);
+  // Cells typed on the sheet view go into the export; formula cells are left alone
+  const tpl = fs.readFileSync(path.join(ROOT, "public/templates/client-review.xlsx"));
+  const { zip: z3, schemeRows } = await Review.assemble(rv2, tpl, { ...edits, cells: { "Freedom Blueprint": { I8: "rohan@example.com", G11: 99 } } });
+  const bp = await z3.file("xl/worksheets/sheet7.xml").async("string");
+  assert.ok(bp.includes("rohan@example.com"), "typed cell exported");
+  assert.ok(/<c r="G11"[^>]*><f>/.test(bp), "formula cell kept");
+  assert.ok([...schemeRows.values()].includes(keyA), "scheme rows mapped for the sheet view");
   assert.equal((await api("DELETE", "/review/edits?client=Medha Dongre Mala")).status, 200);
   assert.deepEqual((await api("GET", "/review?client=Medha Dongre Mala")).body.edits, {});
 
