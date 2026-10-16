@@ -64,6 +64,25 @@ for (const [r1, r2] of [[6, 13], [16, 23], [26, 33], [36, 43], [46, 53], [66, 67
   J.clearArea("F", "T", r1, r2);
 }
 J.set("B118", "Other Investments");
+// The source sheet marks a few savings cells yellow by hand. Those cells get the plain style of
+// the cell on their left, so neither the page nor the export shows the marks.
+{
+  const styles = await text("xl/styles.xml");
+  const fills = [...styles.match(/<fills\b[\s\S]*?<\/fills>/)[0].matchAll(/<fill>[\s\S]*?<\/fill>/g)].map((m) => m[0]);
+  const xfs = [...styles.match(/<cellXfs\b[\s\S]*?<\/cellXfs>/)[0].matchAll(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g)].map((m) => m[0]);
+  const yellow = new Set(xfs.map((x, i) => (/rgb="FFFFFF00"/.test(fills[Number(/fillId="(\d+)"/.exec(x)?.[1] || 0)] || "") ? i : -1)).filter((i) => i >= 0));
+  const cols = "FGHIJKLMNOPQRST".split("");
+  for (const [r, row] of J.rows) {
+    if (r < 96 || r > 119) continue;
+    for (const [c, x] of row.cells) {
+      const s = /\bs="(\d+)"/.exec(x);
+      if (!s || !yellow.has(Number(s[1]))) continue;
+      const left = row.cells.get(cols[cols.indexOf(c) - 1]) || "";
+      const plain = /\bs="(\d+)"/.exec(left);
+      if (plain) row.cells.set(c, x.replace(/\bs="\d+"/, `s="${plain[1]}"`));
+    }
+  }
+}
 
 // SUMMARY PORTFOLIO and DETAILED PORTFOLIO: the app rewrites every row from row 3. Keep the cells
 // (for their styles) and drop the values.

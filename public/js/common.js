@@ -1,6 +1,6 @@
 // Small helpers shared by the admin panel and the dashboards.
 // Shown at the bottom of every page, so it is easy to tell which version a deployment runs.
-const APP_VERSION = "2026-10-16.6";
+const APP_VERSION = "2026-10-16.7";
 const $ = (id) => document.getElementById(id);
 
 function esc(s) {

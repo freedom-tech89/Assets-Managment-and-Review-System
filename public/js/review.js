@@ -727,7 +727,7 @@ const Review = (() => {
   let templateCache = null;
   async function template() {
     if (!templateCache) {
-      const r = await fetch(TEMPLATE_URL);
+      const r = await fetch(typeof APP_VERSION === "string" ? `${TEMPLATE_URL}?v=${APP_VERSION}` : TEMPLATE_URL);
       if (!r.ok) throw new Error("The review sheet template could not be loaded.");
       templateCache = await r.arrayBuffer();
     }
