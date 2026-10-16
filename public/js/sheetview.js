@@ -853,10 +853,28 @@ const SheetView = (() => {
     medium: "2px solid", mediumDashed: "2px dashed", mediumDashDot: "2px dashed", mediumDashDotDot: "2px dashed", slantDashDot: "2px dashed",
     thick: "3px solid", double: "3px double",
   };
-  const borderCss = (b) => (b ? `${BORDER[b.style] || "1px solid"} #${b.color}` : null);
+  // Modern look (opts.modern): the sheet's content and colours, drawn like a web dashboard
+  // rather than Excel: the app's font, soft grey lines, lighter pastel fills, no grid headings.
+  const luma = (hex) => { const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16)); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
+  const mix = (hex, to, t) => [0, 2, 4].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) * (1 - t) + parseInt(to.slice(i, i + 2), 16) * t).toString(16).padStart(2, "0")).join("").toUpperCase();
+  const softFill = (hex) => (luma(hex) > 0.5 ? mix(hex, "FFFFFF", 0.6) : mix(hex, "1F3864", 0.15));
+  const softLine = (hex) => (luma(hex) < 0.35 ? "D3DAE6" : mix(hex, "FFFFFF", 0.3));
+  const MODERN_FONT = 'Inter,"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif';
+  // In the dashboard look, thin column lines go away and thin row lines turn hairline grey.
+  const borderCss = (b, modern, vertical) => {
+    if (!b) return null;
+    if (!modern) return `${BORDER[b.style] || "1px solid"} #${b.color}`;
+    const heavy = /thick|double|medium/.test(b.style);
+    if (vertical && !heavy) return "none";
+    return heavy ? `2px solid #${softLine(b.color)}` : "1px solid #E7EBF2";
+  };
 
-  function fontCss(font) {
+  function fontCss(font, modern) {
     const fam = String(font.name).replace(/["\\]/g, "");
+    if (modern) {
+      return `font-family:${MODERN_FONT};font-size:${Math.max(8, font.sz - 1)}pt;${font.b ? "font-weight:600;" : ""}${font.i ? "font-style:italic;" : ""}`
+        + `${font.u ? "text-decoration:underline;" : ""}${font.color ? `color:#${font.color === "000000" ? "1D2433" : font.color};` : "color:#1D2433;"}`;
+    }
     return `font-family:"${fam}",Calibri,Arial,sans-serif;font-size:${font.sz}pt;${font.b ? "font-weight:700;" : ""}${font.i ? "font-style:italic;" : ""}`
       + `${font.u || font.s ? `text-decoration:${font.u ? "underline" : ""} ${font.s ? "line-through" : ""};` : ""}${font.color ? `color:#${font.color};` : ""}`;
   }
@@ -896,6 +914,9 @@ const SheetView = (() => {
   // decorate(r, c) -> {cls, before} to add a class and HTML before a cell's text}.
   function render(wb, name, host, opts = {}) {
     const L = layout(wb, name, opts);
+    const modern = !!opts.modern;
+    const HW = modern ? 0 : HEAD_W, HH = modern ? 0 : HEAD_H;
+    const bcss = (b, vertical) => borderCss(b, modern, vertical);
     const { sh, cols, rows } = L;
     const visibleCol = new Set(cols.map((x) => x.c)), visibleRow = new Set(rows.map((x) => x.r));
     const covered = new Set(), mergeAt = new Map();
@@ -911,15 +932,15 @@ const SheetView = (() => {
       const opp = { right: ["left", 0, 1], bottom: ["top", 1, 0], left: ["right", 0, -1], top: ["bottom", -1, 0] }[side];
       return own(r, c, side) || (r + opp[1] >= 1 && c + opp[2] >= 1 ? own(r + opp[1], c + opp[2], opp[0]) : null);
     };
-    const grid = (a, b) => (sh.grid && !a && !b ? "1px solid #e1e3e6" : "none");
-    const width = cols.reduce((a, x) => a + x.w, 0) + HEAD_W;
+    const grid = (a, b) => (sh.grid && !a && !b && !modern ? "1px solid #e1e3e6" : "none");
+    const width = cols.reduce((a, x) => a + x.w, 0) + HW;
     const empty = (r, c) => { const x = sh.cells.get(key(r, c)); return !x || ((x.v === null || x.v === "") && !x.f); };
 
-    let html = `<table class="xl-grid" style="width:${width}px"><colgroup><col style="width:${HEAD_W}px">${cols.map((x) => `<col style="width:${x.w}px">`).join("")}</colgroup>`;
-    html += `<thead><tr><th class="xl-corner"></th>${cols.map((x) => `<th class="xl-ch" data-c="${x.c}">${colName(x.c)}</th>`).join("")}</tr></thead><tbody>`;
+    let html = `<table class="xl-grid${modern ? " xl-modern" : ""}" style="width:${width}px"><colgroup>${modern ? "" : `<col style="width:${HEAD_W}px">`}${cols.map((x) => `<col style="width:${x.w}px">`).join("")}</colgroup>`;
+    html += modern ? "<tbody>" : `<thead><tr><th class="xl-corner"></th>${cols.map((x) => `<th class="xl-ch" data-c="${x.c}">${colName(x.c)}</th>`).join("")}</tr></thead><tbody>`;
     const firstCol = cols[0]?.c, firstRow = rows[0]?.r;
     for (const { r, h } of rows) {
-      html += `<tr style="height:${h}px"><th class="xl-rh" data-r="${r}">${r}</th>`;
+      html += `<tr style="height:${h}px">${modern ? "" : `<th class="xl-rh" data-r="${r}">${r}</th>`}`;
       for (const { c } of cols) {
         if (covered.has(key(r, c))) continue;
         const m = mergeAt.get(key(r, c));
@@ -934,12 +955,12 @@ const SheetView = (() => {
         const v = wb.value(name, r, c);
         const fmt = format(v, st.fmt);
         const fill = st.fill;
-        const right = borderCss(edge(r, c2, "right")) || grid(fill, fillAt(r, c2 + 1));
-        const bottom = borderCss(edge(r2, c, "bottom")) || grid(fill, fillAt(r2 + 1, c));
+        const right = bcss(edge(r, c2, "right"), true) || grid(fill, fillAt(r, c2 + 1));
+        const bottom = bcss(edge(r2, c, "bottom")) || grid(fill, fillAt(r2 + 1, c));
         let style = `border-right:${right};border-bottom:${bottom};`;
-        if (c === firstCol) style += `border-left:${borderCss(own(r, c, "left")) || "none"};`;
-        if (r === firstRow) style += `border-top:${borderCss(own(r, c, "top")) || "none"};`;
-        if (fill) style += `background:#${fill};`;
+        if (c === firstCol) style += `border-left:${bcss(own(r, c, "left"), true) || "none"};`;
+        if (r === firstRow) style += `border-top:${bcss(own(r, c, "top")) || "none"};`;
+        if (fill) style += `background:#${modern ? softFill(fill) : fill};`;
         if (fmt.color) style += `color:${fmt.color};`;
         let hAlign = st.h;
         if (hAlign === "general") hAlign = typeof v === "number" ? "right" : typeof v === "boolean" || (v && v.e) ? "center" : "left";
@@ -969,11 +990,11 @@ const SheetView = (() => {
 
     // Pictures and charts over the cells.
     const colGone = (c) => L.colX[c] === L.colX[c - 1], rowGone = (r) => L.rowY[r] === L.rowY[r - 1];
-    const at = (p) => ({ x: HEAD_W + L.colX[Math.min(p.c, L.maxC)] + (colGone(p.c + 1) ? 0 : p.co), y: HEAD_H + L.rowY[Math.min(p.r, L.maxR)] + (rowGone(p.r + 1) ? 0 : p.ro) });
+    const at = (p) => ({ x: HW + L.colX[Math.min(p.c, L.maxC)] + (colGone(p.c + 1) ? 0 : p.co), y: HH + L.rowY[Math.min(p.r, L.maxR)] + (rowGone(p.r + 1) ? 0 : p.ro) });
     let draw = "";
     for (const d of wb.drawings[name] || []) {
       let x, y, w, hh;
-      if (d.abs) { x = HEAD_W + d.abs.x; y = HEAD_H + d.abs.y; w = d.w; hh = d.h; }
+      if (d.abs) { x = HW + d.abs.x; y = HH + d.abs.y; w = d.w; hh = d.h; }
       else {
         const a = at(d.from);
         x = a.x; y = a.y;
@@ -988,7 +1009,7 @@ const SheetView = (() => {
     // Styles for the cells' fonts, one class per cell style used.
     const used = new Set();
     for (const m of html.matchAll(/xl-x(\d+)/g)) used.add(Number(m[1]));
-    const css = [...used].map((i) => `.xl-x${i}{${fontCss(wb.styles.xfs[i]?.font || wb.styles.fonts[0])}}`).join("");
+    const css = [...used].map((i) => `.xl-x${i}{${fontCss(wb.styles.xfs[i]?.font || wb.styles.fonts[0], modern)}}`).join("");
     host.innerHTML = `<style>${css}</style><div class="xl-sheet" style="zoom:${opts.zoom || 1}">${html}<div class="xl-draw">${draw}</div></div>`;
     return L;
   }

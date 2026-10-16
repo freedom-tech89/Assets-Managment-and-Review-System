@@ -19,7 +19,10 @@ const ReviewPage = (() => {
   const SHOW_HIDDEN = new Set(["SUMMARY PORTFOLIO", DETAILED]);
   let sheetName = null, sel = null, editor = null, active = false, building = null, pending = false;
   let saveTimer = null, saving = null, dirty = false;
-  let zoom = Number(store("xlZoom")) || 0.9;
+  let zoom = Number(store("xlZoom")) || 1;
+  // Dashboard look by default; "Excel view" shows row numbers, column letters and the formula bar.
+  let excelView = store("xlExcelView") === "1";
+  const TAB_NAMES = { "1": "Cover", "SUMMARY PORTFOLIO": "Summary Portfolio", "DETAILED PORTFOLIO": "Detailed Portfolio" };
 
   function store(k, v) {
     try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch { return null; }
@@ -97,7 +100,7 @@ const ReviewPage = (() => {
 
   function shell() {
     const c = data.clientName;
-    view.innerHTML = `<div class="xl-app">
+    view.innerHTML = `<div class="xl-app ${excelView ? "" : "modern"}" id="xlApp">
       <div class="xl-bar">
         <a class="xl-back" href="#/client/${enc(c)}" title="Back to ${esc(c)}">‹</a>
         <div class="xl-avatar" aria-hidden="true">${esc(c.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase())}</div>
@@ -105,20 +108,28 @@ const ReviewPage = (() => {
         <div class="xl-kpis" id="xlKpis"></div>
         <label class="xl-date" title="Review date">Date <input type="date" id="xlDate" value="${esc(edits.reviewDate || data.today)}"></label>
         <span id="xlStatus" class="xl-status ${data.editsSavedAt ? "ok" : ""}">${data.editsSavedAt ? "Changes saved" : "No changes yet"}</span>
+        <button type="button" class="xl-btn" id="xlView" title="Switch between the dashboard look and a spreadsheet look">${excelView ? "Dashboard view" : "Excel view"}</button>
         <button type="button" class="xl-btn" id="xlReset">Reset changes</button>
         <button type="button" class="xl-btn xl-export" id="xlExport">Export Excel</button>
       </div>
-      <div class="xl-fx"><span id="xlName" class="xl-name"></span><span class="xl-fxl">fx</span><input id="xlFx" autocomplete="off" spellcheck="false">
-        <span class="xl-folds" id="xlFolds" hidden><button type="button" data-fold="open">▾ Expand all</button><button type="button" data-fold="close">▸ Collapse all</button></span></div>
+      <div class="xl-fx"><span id="xlName" class="xl-name"></span><span class="xl-fxl">fx</span><input id="xlFx" autocomplete="off" spellcheck="false"></div>
       <div id="xlHost" class="xl-host" tabindex="0"></div>
       <div class="xl-foot">
         <div id="xlTabs" class="xl-tabs" role="tablist"></div>
+        <span class="xl-folds" id="xlFolds" hidden><button type="button" data-fold="open">▾ Expand all</button><button type="button" data-fold="close">▸ Collapse all</button></span>
         <button type="button" id="xlOut" class="xl-out" hidden></button>
         <div class="xl-zoom"><button type="button" data-zoom="-1" aria-label="Zoom out">−</button><span id="xlZoom"></span><button type="button" data-zoom="1" aria-label="Zoom in">+</button></div>
       </div>
       <div id="xlMenu" class="xl-menu" hidden></div>
     </div>`;
     $("xlExport").addEventListener("click", exportNow);
+    $("xlView").addEventListener("click", () => {
+      excelView = !excelView;
+      store("xlExcelView", excelView ? "1" : "0");
+      $("xlApp").classList.toggle("modern", !excelView);
+      $("xlView").textContent = excelView ? "Dashboard view" : "Excel view";
+      draw();
+    });
     $("xlReset").addEventListener("click", reset);
     $("xlDate").addEventListener("change", (e) => {
       const v = e.target.value;
@@ -195,7 +206,7 @@ const ReviewPage = (() => {
 
   function tabs() {
     $("xlTabs").innerHTML = wb.sheets.filter((s) => !s.hidden).map((s) =>
-      `<button type="button" role="tab" class="xl-tab ${s.name === sheetName ? "on" : ""}" data-sheet="${esc(s.name)}" aria-selected="${s.name === sheetName}">${esc(s.name)}</button>`).join("");
+      `<button type="button" role="tab" class="xl-tab ${s.name === sheetName ? "on" : ""}" data-sheet="${esc(s.name)}" aria-selected="${s.name === sheetName}">${esc(TAB_NAMES[s.name] || s.name.replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase()))}</button>`).join("");
     $("xlTabs").querySelectorAll("[data-sheet]").forEach((b) => b.addEventListener("click", () => {
       sheetName = b.dataset.sheet;
       store("xlSheet", sheetName);
@@ -211,7 +222,7 @@ const ReviewPage = (() => {
     const detailed = sheetName === DETAILED;
     const hideRows = new Set();
     if (detailed) for (const g of groups) if (!openGroups.has(g.id)) for (let r = g.first; r <= g.last; r++) hideRows.add(r);
-    SheetView.render(wb, sheetName, host, { zoom, isEdited, isEditable, hideRows, showHidden: SHOW_HIDDEN.has(sheetName), decorate: detailed ? decorate : null });
+    SheetView.render(wb, sheetName, host, { zoom, modern: !excelView, isEdited, isEditable, hideRows, showHidden: SHOW_HIDDEN.has(sheetName), decorate: detailed ? decorate : null });
     $("xlFolds").hidden = !detailed || !groups.length;
     host.scrollLeft = scroll.x;
     host.scrollTop = scroll.y;
