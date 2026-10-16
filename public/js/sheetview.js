@@ -982,7 +982,8 @@ const SheetView = (() => {
         const inner = `display:flex;align-items:${vAlign};justify-content:${fmt.left != null ? "space-between" : hAlign === "center" ? "center" : hAlign === "right" ? "flex-end" : "flex-start"};`
           + `text-align:${hAlign};height:${hgt - 1}px;${st.indent ? `padding-${hAlign === "right" ? "right" : "left"}:${st.indent * 9}px;` : ""}`
           + `${st.wrap ? "white-space:pre-wrap;" : ""}${spill ? "overflow:visible;" : ""}${st.rotate === 90 || st.rotate === 180 ? "writing-mode:vertical-rl;transform:rotate(180deg);" : st.rotate === 255 ? "writing-mode:vertical-rl;" : ""}`;
-        html += `<td class="${cls.join(" ")}" data-r="${r}" data-c="${c}"${span} style="${style}"><div class="xl-c" style="${inner}">${deco?.before || ""}${content}</div></td>`;
+        const tip = modern && typeof v === "string" && v.length > 12 && !spill && !st.wrap ? ` title="${esc(v)}"` : "";
+        html += `<td class="${cls.join(" ")}" data-r="${r}" data-c="${c}"${span}${tip} style="${style}"><div class="xl-c" style="${inner}">${deco?.before || ""}${content}</div></td>`;
       }
       html += "</tr>";
     }

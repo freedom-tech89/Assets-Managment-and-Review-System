@@ -313,26 +313,54 @@ table.xl-grid td.xl-fold:hover { filter: brightness(.96); }
 
 /* Review Report: dashboard look (default) */
 .xl-app.modern { background: var(--bg); }
-.xl-app.modern .xl-bar { background: var(--primary); box-shadow: none; }
-.xl-app.modern .xl-export { color: var(--primary); }
-.xl-app.modern .xl-export:hover:not(:disabled) { background: #e6edf8; }
 .xl-app.modern .xl-fx { display: none; }
-.xl-app.modern .xl-foot { order: -1; background: #fff; border-top: 0; border-bottom: 1px solid var(--line); box-shadow: none; padding: 8px 16px; gap: 10px; align-items: center; }
-.xl-app.modern .xl-bar { order: -2; }
-.xl-app.modern .xl-tabs { gap: 6px; }
-.xl-app.modern .xl-tab { border: 1px solid var(--line); border-radius: 999px; padding: 6px 16px; font: 600 13.5px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--muted); background: #fff; }
-.xl-app.modern .xl-tab:hover { color: var(--primary); border-color: #b9c6dd; background: #f5f8fd; }
-.xl-app.modern .xl-tab.on { background: var(--primary); border-color: var(--primary); color: #fff; box-shadow: none; }
-.xl-app.modern .xl-zoom, .xl-app.modern .xl-out { border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-.xl-app.modern .xl-out { background: #fff4ce; border-color: #f1dc9c; }
-.xl-app.modern .xl-folds { border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+/* Header: light bar with the client on the left and actions on the right, stat cards below. */
+.xl-app.modern .xl-bar { order: -2; background: #fff; color: var(--text); box-shadow: none; border-bottom: 1px solid var(--line); padding: 10px 24px 12px; gap: 8px 12px; }
+.xl-app.modern .xl-back { color: var(--muted); border: 1px solid var(--line); border-radius: 10px; width: 34px; height: 34px; display: grid; place-items: center; text-decoration: none; font-size: 20px; line-height: 1; background: #fff; }
+.xl-app.modern .xl-back:hover { color: var(--primary); border-color: #b9c6dd; background: #f5f8fd; }
+.xl-app.modern .xl-avatar { width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #2b4c85, #1f3864); color: #fff; font-size: 15px; }
+.xl-app.modern .xl-title b { font-size: 18px; letter-spacing: -.01em; color: var(--text); }
+.xl-app.modern .xl-title span { color: var(--muted); font-size: 12.5px; }
+.xl-app.modern .xl-title { margin-right: auto; }
+.xl-app.modern .xl-date { color: var(--muted); font-size: 13px; font-weight: 600; }
+.xl-app.modern .xl-date input { border: 1px solid var(--line); border-radius: 9px; padding: 6px 10px; font: inherit; color: var(--text); background: #fff; }
+.xl-app.modern .xl-status { color: var(--muted); font-size: 12.5px; background: #f1f4f9; border-radius: 999px; padding: 4px 10px; }
+.xl-app.modern .xl-status.ok { color: var(--pos); background: #e8f6ee; }
+.xl-app.modern .xl-btn { background: #fff; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-weight: 600; font-size: 13.5px; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
+.xl-app.modern .xl-btn:hover:not(:disabled) { background: #f5f8fd; border-color: #b9c6dd; color: var(--primary); }
+.xl-app.modern .xl-btn.xl-export { background: var(--primary); border-color: var(--primary); color: #fff; }
+.xl-app.modern .xl-btn.xl-export:hover:not(:disabled) { background: var(--primary-h); color: #fff; }
+.xl-app.modern .xl-kpis { order: 10; flex-basis: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 2px 0 0; }
+.xl-app.modern .xl-kpi { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 7px 14px 8px 16px; position: relative; overflow: hidden; box-shadow: 0 1px 2px rgba(16,24,40,.04); line-height: 1.25; }
+.xl-app.modern .xl-kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--primary); }
+.xl-app.modern .xl-kpi:nth-child(2)::before { background: var(--teal); }
+.xl-app.modern .xl-kpi.xl-up::before { background: var(--pos); }
+.xl-app.modern .xl-kpi.xl-down::before { background: var(--danger); }
+.xl-app.modern .xl-kpi:nth-child(4)::before { background: var(--purple); }
+.xl-app.modern .xl-kpi span { color: var(--muted); opacity: 1; font-size: 11.5px; font-weight: 600; }
+.xl-app.modern .xl-kpi b { display: block; font-size: 19px; letter-spacing: -.01em; margin-top: 2px; color: var(--text); }
+.xl-app.modern .xl-kpi small { font-size: 12px; padding: 1px 7px; border-radius: 999px; margin-left: 6px; vertical-align: 3px; }
+.xl-app.modern .xl-kpi.xl-up b { color: var(--pos); }
+.xl-app.modern .xl-kpi.xl-up small { background: #e8f6ee; }
+.xl-app.modern .xl-kpi.xl-down b { color: var(--danger); }
+.xl-app.modern .xl-kpi.xl-down small { background: #fdecea; }
+@media (max-width: 900px) { .xl-app.modern .xl-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* Sheet tabs: underlined navigation with the fold and zoom controls on the right. */
+.xl-app.modern .xl-foot { order: -1; background: #fff; border-top: 0; border-bottom: 1px solid var(--line); box-shadow: none; padding: 0 24px; gap: 10px; align-items: center; }
+.xl-app.modern .xl-tabs { gap: 4px; align-self: stretch; }
+.xl-app.modern .xl-tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 12px 8px; margin: 0; font: 600 13.5px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--muted); background: none; box-shadow: none; }
+.xl-app.modern .xl-tab:hover { color: var(--primary); background: none; }
+.xl-app.modern .xl-tab.on { color: var(--primary); border-bottom-color: var(--primary); background: none; box-shadow: none; }
+.xl-app.modern .xl-zoom, .xl-app.modern .xl-folds { border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.xl-app.modern .xl-out { border: 1px solid #f1dc9c; border-radius: 9px; background: #fff4ce; }
 .xl-app.modern .xl-folds button { color: var(--primary); font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
 .xl-app.modern .xl-folds button:hover { background: #eef2f9; }
-.xl-app.modern .xl-host { padding: 20px; }
-.xl-app.modern .xl-sheet { background: #fff; border-radius: 14px; box-shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 18px rgba(16,24,40,.07); padding: 18px; }
-.xl-app.modern .xl-draw { inset: 18px; }
+/* The sheet sits on a white card. */
+.xl-app.modern .xl-host { padding: 16px 24px; }
+.xl-app.modern .xl-sheet { background: #fff; border-radius: 16px; border: 1px solid var(--line); box-shadow: 0 1px 3px rgba(16,24,40,.05), 0 8px 24px rgba(16,24,40,.06); padding: 20px; }
+.xl-app.modern .xl-draw { inset: 20px; }
 .xl-app.modern .xl-chart { border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(16,24,40,.12); }
-table.xl-grid.xl-modern { font-family: Inter, "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+table.xl-grid.xl-modern { font-family: Inter, "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; font-variant-numeric: tabular-nums; }
 table.xl-grid.xl-modern td { padding: 0 6px; cursor: pointer; }
 table.xl-grid.xl-modern td.xl-ro { cursor: default; }
 table.xl-grid.xl-modern tbody tr:hover td:not([style*="background"]) { background: #f6f8fc; }
