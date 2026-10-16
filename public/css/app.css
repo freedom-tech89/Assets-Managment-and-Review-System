@@ -223,4 +223,26 @@ a.pcard { text-decoration: none; }
 .app-version { text-align: center; color: var(--muted); font-size: 12px; margin: 0 0 24px; }
 .review-btn { padding: 5px 10px; font-size: 12.5px; white-space: nowrap; }
 .page-head .review-btn { padding: 9px 14px; font-size: 14px; }
-.review-btn:disabled { opacity: .6; cursor: progress; }
+.review-btn { display: inline-block; text-decoration: none; border-radius: 7px; font-weight: 600; }
+
+/* Review Report page */
+.rv-status { font-size: 13px; color: var(--muted); }
+.rv-status.ok { color: var(--success); }
+.rv-status.err { color: var(--danger); font-weight: 600; }
+.rv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px 14px; }
+.rv-table { font-size: 13px; }
+.rv-table th, .rv-table td { padding: 5px 6px; vertical-align: middle; }
+.rv-table input, .rv-table select { width: 100%; min-width: 90px; padding: 5px 7px; font-size: 13px; }
+.rv-table input[type=checkbox] { width: auto; min-width: 0; }
+.rv-table input.rv-num { text-align: right; min-width: 105px; font-variant-numeric: tabular-nums; }
+.rv-table input.rv-short { min-width: 80px; }
+.rv-table input.rv-sub { min-width: 120px; }
+.rv-table td.scheme { min-width: 240px; }
+#rvSchemes { min-width: 1700px; }
+.rv-table tr.grp td { background: #f2f5fa; font-weight: 700; color: var(--primary); font-size: 12.5px; letter-spacing: .03em; }
+.rv-table tr.excluded td:not(:first-child) { opacity: .4; text-decoration: line-through; }
+.rv-table .edited, .rv-grid .edited { background: #fff6d6; border-color: #e5c45a; }
+.rv-two { grid-template-columns: 1fr 1fr; }
+.rv-label { width: 100%; }
+.rv-notes { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; resize: vertical; }
+@media (max-width: 900px) { .rv-two { grid-template-columns: 1fr; } }

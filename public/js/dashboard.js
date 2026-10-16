@@ -325,25 +325,8 @@ const Dashboard = (() => {
       <span class="note">${plural(r.live_sips, "live SIP")} ›</span></button>`;
   }
 
-  // "Review Report" button: downloads the client's review sheet (public/js/review.js).
-  const reviewButton = (name) => `<button type="button" class="outline review-btn" data-review="${esc(name)}" title="Download the client review sheet (Excel)">Review Report</button>`;
-
-  document.addEventListener("click", async (e) => {
-    const b = e.target.closest("[data-review]");
-    if (!b || b.disabled) return;
-    e.preventDefault();
-    const label = b.textContent;
-    b.disabled = true;
-    b.textContent = "Preparing…";
-    try {
-      await Review.download(b.dataset.review);
-    } catch (err) {
-      alert(`Could not create the review report: ${err.message}`);
-    } finally {
-      b.disabled = false;
-      b.textContent = label;
-    }
-  });
+  // "Review Report" button: opens the client's review report page (public/js/reviewpage.js).
+  const reviewButton = (name) => `<a class="button outline review-btn" href="#/review/${enc(name)}" data-review="${esc(name)}" title="Open the review report: check and change the figures, then export to Excel">Review Report</a>`;
 
   function clientColumns(scope = {}) {
     return [

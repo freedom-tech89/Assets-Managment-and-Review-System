@@ -1,5 +1,5 @@
 // Login, logout and page routing (#/dashboard, #/category/<name>, #/platform/<name>[/<category>],
-// #/client/<name>, #/admin).
+// #/client/<name>, #/review/<client>, #/admin).
 (() => {
   const loginView = $("loginView"), appView = $("appView");
 
@@ -19,10 +19,12 @@
     $("dashView").hidden = isAdmin;
     document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === (isAdmin ? "admin" : page === "sips" ? "sips" : "dashboard")));
     window.scrollTo(0, 0);
+    if (page !== "review") ReviewPage.leave();
     if (isAdmin) { document.title = "Admin Panel · Upload Details"; return Admin.show(); }
     if (page === "platform" && name) { document.title = `${name} · Upload Details`; return Dashboard.scope({ platform: name, product: sub }); }
     if (page === "sips") { document.title = "SIPs · Upload Details"; return Dashboard.sips(hashQuery); }
     if (page === "category" && name) { document.title = `${name} · Upload Details`; return Dashboard.scope({ product: name }); }
+    if (page === "review" && name) { document.title = `Review Report · ${name} · Upload Details`; return ReviewPage.show(name); }
     if (page === "client" && name) { document.title = `${name} · Upload Details`; return Dashboard.client(name); }
     document.title = "Dashboard · Upload Details";
     if (location.hash !== "#/dashboard") history.replaceState(null, "", "#/dashboard");

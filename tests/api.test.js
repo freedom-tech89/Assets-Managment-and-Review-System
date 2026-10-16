@@ -155,6 +155,23 @@ try {
   assert.ok((await zip.file("xl/worksheets/sheet1.xml").async("string")).includes("MEDHA DONGRE MALA"), "cover has the client name");
   const detailed = await zip.file("xl/worksheets/sheet6.xml").async("string");
   assert.ok(detailed.includes("Fund A") && detailed.includes("TOTAL PORTFOLIO OF MEDHA DONGRE MALA"), "scheme-wise sheet filled");
+  // Reviewer's changes: saved apart from the uploads, applied to the exported sheet, and resettable
+  const rvFundA = Review.prepare(rv).raw.holdings.find((x) => x.security_name === "Fund A");
+  const keyA = Review.rowKey(rvFundA);
+  const edits = { personal: { mobile: "9800011122" }, notes: "Move ₹5,000 to debt",
+    schemes: { [keyA]: { current_value: 777777, remarks: "Checked with RM" } } };
+  assert.equal((await api("PUT", "/review/edits?client=Medha Dongre Mala", { edits })).status, 200);
+  assert.equal((await api("PUT", "/review/edits?client=Medha Dongre Mala", { edits: "x" })).status, 400);
+  const rv2 = (await api("GET", "/review?client=Medha Dongre Mala")).body;
+  assert.deepEqual(rv2.edits, edits);
+  assert.deepEqual(rv2.holdings, rv.holdings, "uploaded data unchanged");
+  assert.equal(Review.prepare(rv2, rv2.edits).current.value - Review.prepare(rv2, {}).current.value, 777777 - rvFundA.current_value);
+  const book2 = await mod.exports.loadAsync(await Review.build(rv2, fs.readFileSync(path.join(ROOT, "public/templates/client-review.xlsx")), { output: "nodebuffer" }));
+  const all2 = (await Promise.all(Object.keys(book2.files).filter((f) => f.startsWith("xl/worksheets/sheet")).map((f) => book2.file(f).async("string")))).join("");
+  for (const v of ["777777", "Checked with RM", "9800011122", "Move ₹5,000 to debt"]) assert.ok(all2.includes(v), `export has ${v}`);
+  assert.equal((await api("DELETE", "/review/edits?client=Medha Dongre Mala")).status, 200);
+  assert.deepEqual((await api("GET", "/review?client=Medha Dongre Mala")).body.edits, {});
+
   assert.equal(Review.mfType("SBI Balanced Advantage Fund", null), "Hybrid");
   assert.equal(Review.mfType("ICICI Prudential Corporate Bond Fund", null), "Debt");
   assert.equal(Review.mfType("Kotak Gold Fund", null), "Others");

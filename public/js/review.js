@@ -1,5 +1,5 @@
 // Client Review Sheet: fills the Finowise review workbook (templates/client-review.xlsx) with one
-// client's data and downloads it. The template keeps every sheet, style, formula, chart and logo
+// client's data (plus the reviewer's edits) and downloads it. The template keeps every sheet, style, formula, chart and logo
 // of the review sheet the team already uses; only its data cells are written here:
 //   1                   client name and review date (cover)
 //   Portfolio Journey   values by year: MF by platform and type, stocks / PMS / AIF / bonds, SIPs
@@ -7,7 +7,8 @@
 //   DETAILED PORTFOLIO  scheme-wise list, grouped by platform and fund type
 // Summary and Freedom Blueprint are formulas over Portfolio Journey, so Excel works them out when
 // the file is opened. Other savings (EPF, PPF, property...), personal details and the discussion
-// notes are not uploaded anywhere, so they are left blank for the RM to fill in.
+// notes are not uploaded anywhere: the RM types them on the Review Report page
+// (public/js/reviewpage.js), which also lets them correct the uploaded figures for the report.
 //
 // The workbook is edited as XML inside the zip (JSZip), because rebuilding it with a spreadsheet
 // library would drop the charts and much of the formatting.
@@ -212,6 +213,9 @@ const Review = (() => {
   };
   const is = (name, which) => PLATFORM[which].test(lower(name));
 
+  // Fund type of a row: the reviewer's choice on the review dashboard, else from the category / name.
+  const typeOfRow = (r) => r._type || mfType(r.security_name, r.category);
+
   function emptyMf() {
     const z = () => Object.fromEntries(MF_TYPES.map((t) => [t, 0]));
     return { value: z(), sip: z(), total: 0, sipTotal: 0, invested: 0 };
@@ -224,14 +228,14 @@ const Review = (() => {
     const mf = new Map(); // platform name -> emptyMf()
     const add = (map, name) => { if (!map.has(name)) map.set(name, emptyMf()); return map.get(name); };
     for (const h of own.filter((x) => x.product === "MF")) {
-      const t = mfType(h.security_name, h.category);
+      const t = typeOfRow(h);
       typeOf.set(schemeKey(h), t);
       const p = add(mf, h.platform);
       p.value[t] += h.current_value || 0; p.total += h.current_value || 0; p.invested += h.invested || 0;
     }
     const live = sips.filter((s) => s.live && s.product !== LOANS);
     for (const s of live.filter((x) => x.product === "MF")) {
-      const t = typeOf.get(schemeKey(s)) || mfType(s.security_name, null);
+      const t = typeOf.get(schemeKey(s)) || typeOfRow(s);
       const p = add(mf, s.platform);
       p.sip[t] += s.monthly_amount || 0; p.sipTotal += s.monthly_amount || 0;
     }
@@ -309,6 +313,7 @@ const Review = (() => {
         sh.set(`${col}${r + 1}`, o?.sip || null);
       }
     });
+    return startYear;
   }
 
   function fillSummaryPortfolio(sh, name, timeline) {
@@ -364,6 +369,8 @@ const Review = (() => {
       for (const [c, v] of Object.entries(values)) sh.set(`${c}${row}`, v, { s: styles[kind].get(colNum(c)) ?? null });
     };
     const pct = (gain, inv) => (inv ? round2((gain / inv) * 100) : null);
+    // Columns the reviewer fills on the review dashboard: tenure, new SIP, remarks, suggestions.
+    const notes = (x) => Object.fromEntries([["N", x._tenure], ["P", x._newSip], ["T", x._remarks], ["U", x._suggest]].filter(([, v]) => v !== undefined && v !== ""));
 
     const row = start("investor");
     put(row, "investor", { A: "Investor", B: client.name + (client.id ? ` (${client.id})` : "") });
@@ -392,12 +399,12 @@ const Review = (() => {
       const pname = (hs[0] || live.find((s) => s.platform_key === pk && s.product === "MF")).platform;
       put(start("header"), "header", { B: `${pname} · Mutual Funds` });
       const groupRows = [];
-      const typeOf = new Map(hs.map((h) => [schemeKey(h), mfType(h.security_name, h.category)]));
+      const typeOf = new Map(hs.map((h) => [schemeKey(h), typeOfRow(h)]));
       for (const t of MF_TYPES) {
         const items = hs.filter((h) => typeOf.get(schemeKey(h)) === t).sort((a, b) => (b.current_value || 0) - (a.current_value || 0));
         // SIPs into schemes this platform's AUM file does not hold yet.
         const extra = live.filter((s) => s.product === "MF" && s.platform_key === pk && !typeOf.has(schemeKey(s))
-          && mfType(s.security_name, null) === t);
+          && typeOfRow(s) === t);
         const extraSchemes = [...new Map(extra.map((s) => [schemeKey(s), s])).values()];
         if (!items.length && !extraSchemes.length) continue;
         put(start("type"), "type", { A: "Type", B: t === "Others" ? "OTHERS" : t.toUpperCase() });
@@ -407,14 +414,14 @@ const Review = (() => {
         for (const h of items) {
           const rr = start("scheme");
           put(rr, "scheme", {
-            A: ++n, B: h.security_name || "", C: subType(h.security_name, h.category), D: h.invested, E: 0, F: h.quantity,
+            A: ++n, B: h.security_name || "", C: h._sub ?? subType(h.security_name, h.category), D: h.invested, E: 0, F: h.quantity,
             G: h.current_value, H: 0, I: 0, J: { f: `SUM(G${rr}:I${rr})` }, K: h.xirr, L: h.return_pct ?? pct((h.current_value || 0) - (h.invested || 0), h.invested),
-            M: value ? round2(((h.current_value || 0) / value) * 100) : null, O: sipBy.get(`${pk}|MF|${schemeKey(h)}`) || null,
+            M: value ? round2(((h.current_value || 0) / value) * 100) : null, O: sipBy.get(`${pk}|MF|${schemeKey(h)}`) || null, ...notes(h),
           });
         }
         for (const s of extraSchemes) {
           const rr = start("scheme");
-          put(rr, "scheme", { A: ++n, B: s.security_name || "", C: subType(s.security_name, null), O: sipBy.get(`${pk}|MF|${schemeKey(s)}`) || null });
+          put(rr, "scheme", { A: ++n, B: s.security_name || "", C: s._sub ?? subType(s.security_name, null), O: sipBy.get(`${pk}|MF|${schemeKey(s)}`) || null, ...notes(s) });
         }
         const last = r - 1;
         const gt = start("groupTotal");
@@ -447,14 +454,14 @@ const Review = (() => {
       let n = 0;
       for (const h of hs) {
         const rr = start("item");
-        put(rr, "item", { A: ++n, B: h.security_name || "", C: h.asset_class || "", D: h.invested, F: h.quantity, G: h.current_value,
+        put(rr, "item", { A: ++n, B: h.security_name || "", C: h._sub ?? (h.asset_class || ""), D: h.invested, F: h.quantity, G: h.current_value,
           J: { f: `G${rr}` }, K: h.xirr, L: h.return_pct ?? pct((h.current_value || 0) - (h.invested || 0), h.invested),
-          O: sipBy.get(`${pk}|${prod}|${schemeKey(h)}`) || null });
+          O: sipBy.get(`${pk}|${prod}|${schemeKey(h)}`) || null, ...notes(h) });
       }
       const held = new Set(hs.map(schemeKey));
       for (const s of new Map(live.filter((x) => x.platform_key === pk && x.product === prod && !held.has(schemeKey(x))).map((x) => [schemeKey(x), x])).values()) {
         const rr = start("item");
-        put(rr, "item", { A: ++n, B: s.security_name || "", O: sipBy.get(`${pk}|${prod}|${schemeKey(s)}`) || null });
+        put(rr, "item", { A: ++n, B: s.security_name || "", O: sipBy.get(`${pk}|${prod}|${schemeKey(s)}`) || null, ...notes(s) });
       }
       const last = r - 1;
       const st = start("subTotal");
@@ -482,28 +489,136 @@ const Review = (() => {
     sh.setMerges(merges);
   }
 
+  // ---- Reviewer's edits -------------------------------------------------------------------
+  // The review dashboard saves edits separately from the uploaded data (which is never changed):
+  //   reviewDate, personal {mobile, email, occupation, dob, city, country, rm, years, level},
+  //   schemes {rowKey: {excluded, type, subType, invested, quantity, current_value, xirr, sip,
+  //            tenure, newSip, remarks, suggestions}},
+  //   savings {key: {value, monthly}}, otherLabel, passive {key: amount},
+  //   redemption {mf|stocks|other: {value, reason}}, notes.
+  const rowKey = (r) => `${r.platform_key}|${r.product}|${schemeKey(r)}`;
+  const num = (v) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? undefined : Number(v));
+  const NUM_FIELDS = ["invested", "quantity", "current_value", "xirr"];
+
+  function applyEdits(holdings, sips, edits) {
+    const sch = (edits && edits.schemes) || {};
+    const marks = (e) => ({ _type: e.type || undefined, _sub: e.subType || undefined, _tenure: e.tenure, _newSip: num(e.newSip),
+      _remarks: e.remarks, _suggest: e.suggestions });
+    // A scheme held in several folios is one line on the dashboard; an edited total is shared
+    // between its folios in proportion to what each held (equally when they held nothing).
+    const groups = new Map();
+    for (const h of holdings) { const k = rowKey(h); groups.set(k, [...(groups.get(k) || []), h]); }
+    const share = (h, f, total) => {
+      const g = groups.get(rowKey(h));
+      if (f === "xirr" || g.length === 1) return total;
+      const sum = g.reduce((a, r) => a + (r[f] || 0), 0);
+      return sum ? total * ((h[f] || 0) / sum) : total / g.length;
+    };
+    const hs = [];
+    for (const h of holdings) {
+      const e = sch[rowKey(h)];
+      if (!e) { hs.push(h); continue; }
+      if (e.excluded) continue;
+      const x = { ...h, ...marks(e) };
+      let changed = false;
+      for (const f of NUM_FIELDS) if (num(e[f]) !== undefined) { x[f] = share(h, f, num(e[f])); changed = changed || f !== "xirr"; }
+      if (changed && x.invested) x.return_pct = round2((((x.current_value || 0) - x.invested) / x.invested) * 100);
+      hs.push(x);
+    }
+    const ss = [];
+    const replaced = new Set();
+    for (const s of sips) {
+      const k = rowKey(s), e = sch[k];
+      if (!e) { ss.push(s); continue; }
+      if (e.excluded) continue;
+      if (num(e.sip) !== undefined && s.live) { replaced.add(k); continue; }
+      ss.push({ ...s, ...marks(e) });
+    }
+    // A changed SIP amount replaces the scheme's live SIPs with one SIP of that amount.
+    for (const [k, e] of Object.entries(sch)) {
+      if (e.excluded || num(e.sip) === undefined || !num(e.sip)) continue;
+      const ref = holdings.find((h) => rowKey(h) === k) || sips.find((s) => rowKey(s) === k);
+      if (!ref) continue;
+      ss.push({ platform: ref.platform, platform_key: ref.platform_key, product: ref.product, security_name: ref.security_name,
+        isin: ref.isin, category: ref.category, monthly_amount: num(e.sip), sip_amount: num(e.sip), live: true, ...marks(e) });
+    }
+    return { holdings: hs, sips: ss };
+  }
+
+  // The client's data now (with edits) and as of each date anything was uploaded for.
+  function prepare(data, edits = {}) {
+    const rows = shareIsins([...data.holdings.map((r) => ({ ...r, _h: 1 })), ...data.sips]);
+    const all = { holdings: rows.filter((r) => r._h), sips: rows.filter((r) => !r._h) };
+    const at = (date) => figures(latestRows(all.holdings, data.uploads, date), latestRows(all.sips, data.uploads, date));
+    const dates = [...new Set(data.uploads.map((u) => u.snapshot_date).filter(Boolean))].sort();
+    const raw = { holdings: latestRows(all.holdings, data.uploads, null), sips: latestRows(all.sips, data.uploads, null) };
+    const now = applyEdits(raw.holdings, raw.sips, edits);
+    const current = figures(now.holdings, now.sips);
+    // The latest date shows today's figures, edits included.
+    const timeline = dates.map((date, i) => ({ date, f: i === dates.length - 1 ? current : at(date) }));
+    const years = new Map();
+    for (const t of timeline) years.set(Number(t.date.slice(0, 4)), t.f); // the last date of each year wins
+    const allMf = [...new Set([...all.holdings, ...all.sips].filter((x) => x.product === "MF").map((x) => x.platform))];
+    return { raw, now, current, timeline, years, allMf };
+  }
+
+  // Rows of Portfolio Journey for other savings (value row, monthly row) and passive income.
+  const SAVINGS = [
+    ["epf", "Employee Provident Fund (EPF)", 96, 97], ["gratuity", "Gratuity (expected amount)", 98, null],
+    ["superannuation", "Superannuation", 100, 101], ["ppf", "Public Provident Fund (PPF)", 102, 103],
+    ["fd", "Fixed Deposit (FD)", 104, 105], ["npsSelf", "NPS - Self", 106, 107], ["npsEmployer", "NPS - Employer", 108, 109],
+    ["ulip", "ULIP", 110, 111], ["property", "Investment Property", 112, null], ["gold", "Gold as investment", 114, 115],
+    ["insurance", "Traditional Insurance Policy", 116, 117], ["other", "Other Investments", 118, 119],
+  ];
+  const PASSIVE = [
+    ["ipr1", "Investment Property 1 (rent)", 131], ["ipr2", "Investment Property 2 (rent)", 132], ["ipr3", "Investment Property 3 (rent)", 133],
+    ["eps", "EPS pension", 134], ["superannuation", "Superannuation pension", 135], ["ip1", "Insurance Policy 1 pension", 136],
+    ["ip2", "Insurance Policy 2 pension", 137], ["ip3", "Insurance Policy 3 pension", 138], ["dividend", "Average monthly dividend", 139],
+    ["other", "Other passive income", 140],
+  ];
+  const REDEMPTION = [["mf", "Mutual funds", 66, 67], ["stocks", "Stocks", 91, 92], ["other", "Other savings", 122, 123]];
+  const LEVELS = ["Level 1", "Level 2", "Level 3", "Level 4", "Level 5", "Level 6"];
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+  function fillEdits(sheets, edits, col) {
+    const { journey, blueprint, discussion } = sheets;
+    const p = edits.personal || {};
+    const txt = (sh, ref, v) => { if (v !== undefined && v !== null && String(v).trim() !== "") sh.set(ref, String(v).trim()); };
+    txt(blueprint, "G8", p.mobile); txt(blueprint, "I8", p.email); txt(blueprint, "M8", p.occupation);
+    txt(blueprint, "I11", p.city); txt(blueprint, "K11", p.country); txt(blueprint, "M11", p.rm);
+    if (ISO.test(p.dob || "")) blueprint.set("C11", serial(p.dob));
+    if (num(p.years) !== undefined) blueprint.set("O14", num(p.years));
+    if (LEVELS.includes(p.level)) blueprint.set("M160", p.level);
+    const sv = edits.savings || {};
+    if (edits.otherLabel) journey.set("B118", edits.otherLabel);
+    for (const [k, , vr, mr] of SAVINGS) {
+      if (num(sv[k]?.value) !== undefined) journey.set(`${col}${vr}`, num(sv[k].value));
+      if (mr && num(sv[k]?.monthly) !== undefined) journey.set(`${col}${mr}`, num(sv[k].monthly));
+    }
+    // The blueprint's property and gold lines are typed in, not linked to the journey.
+    if (num(sv.property?.value) !== undefined) blueprint.set("G68", num(sv.property.value));
+    if (num(sv.gold?.value) !== undefined) blueprint.set("G70", num(sv.gold.value));
+    for (const [k, , r] of PASSIVE) if (num((edits.passive || {})[k]) !== undefined) journey.set(`${col}${r}`, num(edits.passive[k]));
+    for (const [k, , vr, rr] of REDEMPTION) {
+      const x = (edits.redemption || {})[k] || {};
+      if (num(x.value) !== undefined) journey.set(`${col}${vr}`, num(x.value));
+      txt(journey, `${col}${rr}`, x.reason);
+    }
+    const lines = String(edits.notes || "").split(/\r?\n/).filter((l) => l.trim()).slice(0, 38);
+    lines.forEach((l, i) => discussion.set(`B${4 + i}`, l));
+  }
+
   // ---- Public ----------------------------------------------------------------------------
-  // data: the /api/review response. Returns the workbook as an ArrayBuffer (or Node Buffer).
-  async function build(data, template, { output = "arraybuffer" } = {}) {
+  // data: the /api/review response; edits: the reviewer's saved changes. Returns the workbook as an
+  // ArrayBuffer (or Node Buffer).
+  async function build(data, template, { output = "arraybuffer", edits = data.edits || {} } = {}) {
     const zip = await JSZip.loadAsync(template);
     const paths = await sheetPaths(zip);
     const read = async (name) => new Sheet(await zip.file(paths[name]).async("string"));
     const write = (name, sh) => zip.file(paths[name], sh.toXml());
-    const rows = shareIsins([...data.holdings.map((r) => ({ ...r, _h: 1 })), ...data.sips]);
-    data = { ...data, holdings: rows.filter((r) => r._h), sips: rows.filter((r) => !r._h) };
-    const reviewDate = data.today;
+    const reviewDate = ISO.test(edits.reviewDate || "") ? edits.reviewDate : data.today;
     const client = { name: data.clientName, id: data.clientId };
-
-    // The client's data now, and as of each date anything was uploaded for.
-    const at = (date) => figures(latestRows(data.holdings, data.uploads, date), latestRows(data.sips, data.uploads, date));
-    const dates = [...new Set(data.uploads.map((u) => u.snapshot_date).filter(Boolean))].sort();
-    const timeline = dates.map((date) => ({ date, f: at(date) }));
-    const years = new Map();
-    for (const t of timeline) years.set(Number(t.date.slice(0, 4)), t.f); // the last date of each year wins
-    const current = at(null);
-    const nowHoldings = latestRows(data.holdings, data.uploads, null);
-    const nowSips = latestRows(data.sips, data.uploads, null);
-    const allMf = [...new Set([...data.holdings, ...data.sips].filter((x) => x.product === "MF").map((x) => x.platform))];
+    const { now, current, timeline, years, allMf } = prepare(data, edits);
 
     const cover = await read("1");
     cover.set("D17", client.name.toUpperCase());
@@ -511,16 +626,23 @@ const Review = (() => {
     write("1", cover);
 
     const journey = await read("Portfolio Journey");
-    fillJourney(journey, years, current, reviewDate, allMf);
-    write("Portfolio Journey", journey);
+    const startYear = fillJourney(journey, years, current, reviewDate, allMf);
 
     const summary = await read("SUMMARY PORTFOLIO");
     fillSummaryPortfolio(summary, client.name.toUpperCase(), timeline);
     write("SUMMARY PORTFOLIO", summary);
 
     const detailed = await read("DETAILED PORTFOLIO");
-    fillDetailed(detailed, client, nowHoldings, nowSips);
+    fillDetailed(detailed, client, now.holdings, now.sips);
     write("DETAILED PORTFOLIO", detailed);
+
+    const blueprint = await read("Freedom Blueprint");
+    const discussion = await read("Discussion");
+    discussion.set("B3", reviewDate.split("-").reverse().join("-"));
+    fillEdits({ journey, blueprint, discussion }, edits, colName(6 + Number(reviewDate.slice(0, 4)) - startYear));
+    write("Portfolio Journey", journey);
+    write("Freedom Blueprint", blueprint);
+    write("Discussion", discussion);
 
     return zip.generateAsync({ type: output, compression: "DEFLATE" });
   }
@@ -528,19 +650,23 @@ const Review = (() => {
   const fileName = (name, iso) => `Review Sheet of ${name.replace(/[\\/:*?"<>|]+/g, " ").trim()} as on ${iso.split("-").reverse().join("-")}.xlsx`;
 
   let templateCache = null;
-  async function download(clientName) {
-    const [data, template] = await Promise.all([
-      api("GET", `/review?client=${encodeURIComponent(clientName)}`),
-      templateCache || fetch(TEMPLATE_URL).then((r) => {
-        if (!r.ok) throw new Error("The review sheet template could not be loaded.");
-        return r.arrayBuffer();
-      }),
-    ]);
-    templateCache = template;
-    const buffer = await build(data, template);
-    window.download(xlsxBlob(buffer), fileName(data.clientName, data.today));
+  async function template() {
+    if (!templateCache) {
+      const r = await fetch(TEMPLATE_URL);
+      if (!r.ok) throw new Error("The review sheet template could not be loaded.");
+      templateCache = await r.arrayBuffer();
+    }
+    return templateCache;
   }
 
-  return { build, download, fileName, Sheet, mfType, subType };
+  // Build and download the workbook from data already loaded (and the edits on screen).
+  async function exportFile(data, edits) {
+    const buffer = await build(data, await template(), { edits });
+    const date = ISO.test(edits.reviewDate || "") ? edits.reviewDate : data.today;
+    window.download(xlsxBlob(buffer), fileName(data.clientName, date));
+  }
+
+  return { build, exportFile, prepare, figures, rowKey, typeOfRow, fileName, Sheet, mfType, subType, num,
+    MF_TYPES, SAVINGS, PASSIVE, REDEMPTION, LEVELS, LOANS };
 })();
 globalThis.Review = Review;
