@@ -194,6 +194,10 @@ const Review = (() => {
   // The rows of one upload for each platform + category. Now (date null): the latest upload, as
   // the dashboard's current_holdings / current_sips views pick it. As of a date: the upload with
   // the latest data date on or before it.
+  // Rows current at a date (or now): per client folio and scheme, the newest upload that lists it,
+  // the same rule as the dashboard. A mutual fund folio is one folio whichever platform sends it.
+  const folioKey = (r) => [r.product, r.product === "MF" ? "" : r.platform_key, lower(r.identifier || ""),
+    (r.isin || "").toUpperCase() || lower(r.security_name || "")].join("|");
   function latestRows(rows, uploads, date) {
     const up = new Map(uploads.map((u) => [u.id, u]));
     const rank = (id) => (date ? `${up.get(id).snapshot_date}|${String(id).padStart(12, "0")}` : String(id).padStart(12, "0"));
@@ -201,10 +205,10 @@ const Review = (() => {
     for (const r of rows) {
       const u = up.get(r.upload_id);
       if (!u || (date && u.snapshot_date > date)) continue;
-      const k = `${r.platform_key}|${r.product}`;
+      const k = folioKey(r);
       if (!best.has(k) || rank(r.upload_id) > rank(best.get(k))) best.set(k, r.upload_id);
     }
-    return rows.filter((r) => best.get(`${r.platform_key}|${r.product}`) === r.upload_id);
+    return rows.filter((r) => best.get(folioKey(r)) === r.upload_id);
   }
 
   const PLATFORM = {

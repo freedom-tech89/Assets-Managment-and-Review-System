@@ -69,7 +69,8 @@ try {
   assert.equal((await api("POST", "/uploads", up({ platform: "Volt Money", product: "LAS", sha256: "e".repeat(64),
     rows: [h({ security_name: "Loan", invested: null, current_value: 50000, gain_loss: null })] }))).status, 201);
 
-  // Same file again is refused; a new file is stored as version 2 and replaces v1 on the dashboard only
+  // Same file again is refused; a new file is stored as version 2. Its folios update the same
+  // folios from v1; folios v2 doesn't list (Fund B) stay as they were.
   assert.equal((await api("POST", "/uploads", up({ sha256: "a".repeat(64) }))).status, 409);
   const a2 = await api("POST", "/uploads", up({ sha256: "f".repeat(64), batchId: "b2",
     rows: [h({ security_name: "Fund A", invested: 1000, current_value: 1500, gain_loss: 500, as_of: "2026-10-31" })] }));
@@ -78,14 +79,14 @@ try {
   assert.equal(a2.body.snapshotDate, "2026-10-31");
 
   let c = (await api("GET", "/dashboard/client?name=medha dongre mala")).body;
-  assert.equal(c.holdings.length, 3, "Finowise v2 (1 row) + Motilal + the loan row");
-  assert.equal(c.total.current_value, 7500);
+  assert.equal(c.holdings.length, 4, "Fund A from v2, Fund B from v1, Motilal and the loan row");
+  assert.equal(c.total.current_value, 1500 + 1800 + 6000);
   assert.equal(c.total.loans, 50000);
   assert.equal(c.total.live_sips, 2);
   assert.equal(c.total.sip_monthly, 6000);
   assert.equal(c.sips.length, 3);
   assert.equal(c.history.length, 5, "v1 is kept in history");
-  assert.equal(c.history.find((x) => x.id === a1.body.id).current, false);
+  assert.equal(c.history.find((x) => x.id === a1.body.id).current, true, "v1 still holds Fund B");
   assert.equal(c.platformProducts.length, 3);
 
   // SIP details: schedule, the matching holding, and other SIPs of the client
@@ -114,7 +115,7 @@ try {
 
   const d = (await api("GET", "/dashboard")).body;
   assert.equal(d.total.clients, 3, "Medha, Anil, Unassigned");
-  assert.equal(d.total.current_value, 7500 + 1200 + 3000 + 1200 + 10000);
+  assert.equal(d.total.current_value, 9300 + 1200 + 3000 + 1200 + 10000);
   assert.equal(d.total.loans, 50000);
   assert.deepEqual(d.products.map((p) => p.product), ["MF", "Stocks", "PMS", "LAS"]);
   assert.equal(d.products.find((p) => p.product === "LAS").loan_value, 50000);
@@ -134,8 +135,9 @@ try {
 
   // Export gives current data only, grouped by source file
   const ex = (await api("GET", "/export?client=Medha Dongre Mala")).body;
-  assert.equal(ex.uploads.length, 5);
-  assert.ok(!ex.uploads.some((u) => u.id === a1.body.id), "old version not exported");
+  assert.equal(ex.uploads.length, 6);
+  assert.deepEqual(ex.uploads.find((u) => u.id === a1.body.id).holdings.map((x) => x.security_name), ["Fund B"],
+    "from v1 only the folio v2 doesn't update");
   assert.equal(ex.uploads.find((u) => u.kind === "sip").sips.length, 3);
   assert.equal(ex.uploads.find((u) => u.platform === "NJ").holdings.length, 1, "only Medha's row from the NJ bulk file");
   assert.equal((await api("GET", "/export?batch=b1")).body.uploads.length, 4);
@@ -240,6 +242,26 @@ try {
   // A Client Wise file whose clients are all someone else is refused
   const c3 = await api("POST", "/uploads", up({ clientName: "Nobody Here", platform: "NJ", sha256: "6".repeat(64), rows: [rahul, priya] }));
   assert.equal(c3.status, 400);
+
+  // Folio by folio: Platform Wise then Client Wise for the same client + PAN updates matching
+  // folios, adds new ones and keeps the rest; the same name with another PAN is someone else
+  const sunil = (o) => h({ client_name: "Sunil Rao", client_id: "SUNIL1234R", isin: null, ...o });
+  const f1 = await api("POST", "/uploads", bulk({ platform: "Finowise", sha256: "7".repeat(64), rows: [
+    sunil({ identifier: "F-1", security_name: "Alpha Fund", current_value: 1000 }),
+    sunil({ identifier: "F-2", security_name: "Beta Fund", current_value: 2000 })] }));
+  assert.equal(f1.status, 201, JSON.stringify(f1.body));
+  const f2 = await api("POST", "/uploads", up({ clientName: "SUNIL RAO", platform: "Finowise", sha256: "8".repeat(64), rows: [
+    h({ identifier: "F-1", security_name: "Alpha Fund", current_value: 1100 }),
+    h({ identifier: "F-3", security_name: "Gamma Fund", current_value: 300 })] }));
+  assert.equal(f2.status, 201, JSON.stringify(f2.body));
+  const sc = (await api("GET", "/dashboard/client?name=Sunil Rao")).body;
+  assert.deepEqual(sc.holdings.map((x) => [x.identifier, x.current_value]).sort(), [["F-1", 1100], ["F-2", 2000], ["F-3", 300]]);
+  const sx = (await api("GET", "/export?client=Sunil Rao")).body.uploads.flatMap((u) => u.holdings);
+  assert.ok(sx.every((x) => x.pan === "SUNIL1234R"), "rows without a PAN take the client's PAN");
+  const other = await api("POST", "/uploads", bulk({ platform: "NJ", sha256: "9".repeat(64), rows: [
+    h({ client_name: "Sunil Rao", client_id: "OTHER9876Q", identifier: "N-1", security_name: "Delta Fund" })] }));
+  assert.equal(other.status, 201);
+  assert.ok((await api("GET", "/dashboard")).body.clients.some((x) => x.client_name === "Sunil Rao (OTHER9876Q)"), "name + PAN is the client");
 
   assert.equal((await api("POST", "/logout")).status, 200);
   assert.equal((await api("GET", "/dashboard")).status, 401);

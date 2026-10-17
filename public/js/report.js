@@ -154,10 +154,12 @@
   function holdingColumns() {
     return [
       col("S.No", null, "0", 6),
-      col("Category", "category_out", null, 18),
-      col("Scheme", "security_name", null, 44),
       col("Client Name", "client_name", null, 26),
       col("PAN", "pan", null, 13),
+      col("Category", "category_out", null, 18),
+      col("Platform", "platform", null, 16),
+      col("Folio ID", "identifier", null, 16),
+      col("Scheme", "security_name", null, 44),
       col("Invested Value", "invested", MONEY, 16),
       col("Current Value", "current_value", MONEY, 16),
       col("Invested Date", "start_date", null, 13),
@@ -241,12 +243,12 @@
     const PAN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
     const panOf = (v) => { const x = String(v || "").replace(/\s+/g, "").toUpperCase(); return PAN.test(x) ? x : null; };
     const pans = new Map();
-    [...all, ...sips].forEach((x) => { const p = panOf(x.client_id); if (p && !pans.has(x.client_name)) pans.set(x.client_name, p); });
+    [...all, ...sips].forEach((x) => { const p = x.pan || panOf(x.client_id); if (p && !pans.has(x.client_name)) pans.set(x.client_name, p); });
     const schemeKey = (x) => `${x.client_name}|${x.isin || x.identifier || (x.security_name || "").toLowerCase()}`;
     const sipOf = new Map();
     sips.forEach((x) => { const k = schemeKey(x); if (!sipOf.has(k) || (x.start_date && x.start_date < (sipOf.get(k).start_date || "9999"))) sipOf.set(k, x); });
     all.forEach((h) => {
-      h.pan = panOf(h.client_id) || pans.get(h.client_name) || "";
+      h.pan = h.pan || panOf(h.client_id) || pans.get(h.client_name) || "";
       h.category_out = h.category || h.asset_class || h.product;
       const sip = sipOf.get(schemeKey(h));
       h.start_date = h.start_date || sip?.start_date || null;
