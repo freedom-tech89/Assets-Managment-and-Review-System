@@ -380,6 +380,7 @@ const Review = (() => {
     const merges = [];
     const schemeRows = new Map(); // row number -> rowKey of the scheme on it (for the review page)
     const folds = []; // fund-type and platform blocks the review page can fold: {id, head, first, last, total}
+    const blocks = []; // one per platform + product, for the review page's cards: {head, total, folds: [id]}
     let r = 3;
     const start = (kind) => { sh.blankRow(r, attrs[kind], styles[kind]); return r++; };
     // Scheme rows show ₹ on invested, current value and total, as on the Live SIP column.
@@ -419,7 +420,8 @@ const Review = (() => {
     for (const pk of mfPlatforms) {
       const hs = own.filter((h) => h.product === "MF" && h.platform_key === pk);
       const pname = (hs[0] || live.find((s) => s.platform_key === pk && s.product === "MF")).platform;
-      put(start("header"), "header", { B: `${pname} · Mutual Funds` });
+      const block = { head: start("header"), folds: [] };
+      put(block.head, "header", { B: `${pname} · Mutual Funds` });
       const groupRows = [];
       const typeOf = new Map(hs.map((h) => [schemeKey(h), typeOfRow(h)]));
       for (const t of MF_TYPES) {
@@ -451,6 +453,7 @@ const Review = (() => {
         const last = r - 1;
         const gt = start("groupTotal");
         folds.push({ id: `${pk}|MF|${t}`, head, first, last, total: gt });
+        block.folds.push(`${pk}|MF|${t}`);
         merges.push(`A${gt}:C${gt}`);
         const sum = (c) => ({ f: `SUM(${c}${first}:${c}${last})` });
         const inv = items.reduce((a, h) => a + (h.invested || 0), 0);
@@ -466,6 +469,7 @@ const Review = (() => {
       put(pt, "platformTotal", { A: `Grand Total ${pname} Portfolio`, D: sumOf("D"), E: sumOf("E"), F: sumOf("F"), G: sumOf("G"), H: sumOf("H"),
         I: sumOf("I"), J: sumOf("J"), K: xirrOf(hs), L: pct(value - inv, inv), M: 100, O: sumOf("O") });
       totals.push(pt);
+      blocks.push({ ...block, total: pt });
       start("platformGap");
     }
 
@@ -495,6 +499,7 @@ const Review = (() => {
       const last = r - 1;
       const st = start("subTotal");
       folds.push({ id: `${pk}|${prod}`, head, first, last, total: st });
+      blocks.push({ head, total: st, folds: [`${pk}|${prod}`] });
       const sum = (c) => ({ f: last >= first ? `SUM(${c}${first}:${c}${last})` : "0" });
       const value = hs.reduce((a, h) => a + (h.current_value || 0), 0), inv = hs.reduce((a, h) => a + (h.invested || 0), 0);
       put(st, "subTotal", { B: `TOTAL ${pname.toUpperCase()} ${prod.toUpperCase()} PORTFOLIO`, D: sum("D"), E: 0, G: sum("G"), H: 0,
@@ -513,11 +518,13 @@ const Review = (() => {
     const loans = holdings.filter((h) => h.product === LOANS);
     if (loans.length) {
       r++;
-      put(start("header"), "header", { B: "Loans against securities (not included in the total above)" });
-      for (const l of loans) put(start("item"), "item", { B: `${l.platform} · ${l.security_name || "Loan"}`, G: l.current_value });
+      const lb = { head: start("header"), loans: [] };
+      put(lb.head, "header", { B: "Loans against securities (not included in the total above)" });
+      for (const l of loans) { lb.loans.push(r); put(start("item"), "item", { B: `${l.platform} · ${l.security_name || "Loan"}`, G: l.current_value }); }
+      blocks.push(lb);
     }
     sh.setMerges(merges);
-    return { schemeRows, groups: folds };
+    return { schemeRows, groups: folds, blocks, grand: gr };
   }
 
   // ---- Reviewer's edits -------------------------------------------------------------------
@@ -714,7 +721,7 @@ const Review = (() => {
 
     const detailed = await read("DETAILED PORTFOLIO");
     const styleBook = await cellStyles(zip);
-    const { schemeRows, groups } = fillDetailed(detailed, client, now.holdings, now.sips, (id, ref) => styleBook.rupee(id, ref));
+    const { schemeRows, groups, blocks, grand } = fillDetailed(detailed, client, now.holdings, now.sips, (id, ref) => styleBook.rupee(id, ref));
     styleBook.save();
     write("DETAILED PORTFOLIO", detailed);
 
@@ -728,7 +735,7 @@ const Review = (() => {
     }
     applyCells(others, edits.cells);
     for (const [name, sh] of Object.entries(others)) write(name, sh);
-    return { zip, schemeRows, groups };
+    return { zip, schemeRows, groups, blocks, grand };
   }
 
   async function build(data, template, { output = "arraybuffer", edits = data.edits || {} } = {}) {

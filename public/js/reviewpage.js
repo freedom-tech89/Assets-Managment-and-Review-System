@@ -15,6 +15,8 @@ const ReviewPage = (() => {
 
   let data = null, edits = {}, wb = null, schemeRows = new Map(), names = new Map();
   let groups = [], openGroups = new Set(); // DETAILED PORTFOLIO blocks; folded unless opened
+  let foldsSet = false; // the card view starts with every scheme shown
+  let blocks = [], grandRow = null; // DETAILED PORTFOLIO platform blocks, for the card view
   // Sheets whose hidden columns hold client figures, so the page shows them.
   const SHOW_HIDDEN = new Set(["SUMMARY PORTFOLIO", DETAILED]);
   let sheetName = null, sel = null, editor = null, active = false, building = null, pending = false;
@@ -93,6 +95,8 @@ const ReviewPage = (() => {
     sel = null;
     const prep = Review.prepare(data, {});
     names = new Map([...prep.raw.holdings, ...prep.raw.sips].map((r) => [Review.rowKey(r), r.security_name || "Scheme"]));
+    foldsSet = false;
+    openGroups = new Set();
     shell();
     active = true;
     await rebuild();
@@ -152,7 +156,7 @@ const ReviewPage = (() => {
     }));
     const host = $("xlHost");
     host.addEventListener("click", (e) => {
-      const td = e.target.closest("td[data-r]");
+      const td = e.target.closest("[data-r][data-c]");
       if (!td) return;
       const r = Number(td.dataset.r);
       const g = sheetName === DETAILED && groups.find((x) => x.head === r || x.total === r);
@@ -161,13 +165,14 @@ const ReviewPage = (() => {
         draw();
       }
       select(r, Number(td.dataset.c));
+      if (td.classList.contains("cv-edit")) openEditor();
     });
     host.addEventListener("dblclick", (e) => {
-      const td = e.target.closest("td[data-r]");
+      const td = e.target.closest("[data-r][data-c]");
       if (td) { select(Number(td.dataset.r), Number(td.dataset.c)); openEditor(); }
     });
     host.addEventListener("contextmenu", (e) => {
-      const td = e.target.closest("td[data-r]");
+      const td = e.target.closest("[data-r][data-c]");
       if (!td) return;
       e.preventDefault();
       select(Number(td.dataset.r), Number(td.dataset.c));
@@ -186,6 +191,9 @@ const ReviewPage = (() => {
         const out = await Review.assemble(data, await Review.template(), clean(edits));
         schemeRows = out.schemeRows;
         groups = out.groups || [];
+        blocks = out.blocks || [];
+        if (!foldsSet) { foldsSet = true; if (!excelView) openGroups = new Set(groups.map((g) => g.id)); }
+        grandRow = out.grand ?? null;
         wb = await SheetView.load(out.zip);
         if (!sheetName || !wb.sheets.some((s) => s.name === sheetName && !s.hidden)) {
           const remembered = store("xlSheet");
@@ -222,7 +230,8 @@ const ReviewPage = (() => {
     const detailed = sheetName === DETAILED;
     const hideRows = new Set();
     if (detailed) for (const g of groups) if (!openGroups.has(g.id)) for (let r = g.first; r <= g.last; r++) hideRows.add(r);
-    SheetView.render(wb, sheetName, host, { zoom, modern: !excelView, isEdited, isEditable, hideRows, showHidden: SHOW_HIDDEN.has(sheetName), decorate: detailed ? decorate : null });
+    if (detailed && !excelView) Cards.render(host);
+    else SheetView.render(wb, sheetName, host, { zoom, modern: !excelView, isEdited, isEditable, hideRows, showHidden: SHOW_HIDDEN.has(sheetName), decorate: detailed ? decorate : null });
     $("xlFolds").hidden = !detailed || !groups.length;
     host.scrollLeft = scroll.x;
     host.scrollTop = scroll.y;
@@ -244,6 +253,156 @@ const ReviewPage = (() => {
     if (g.head === r || (g.total === r && !open)) return { cls: "xl-fold" };
     return null;
   }
+
+  // DETAILED PORTFOLIO in the dashboard look: a card per platform, its fund types as rows that
+  // open into scheme cards. Every figure is read from the sheet, so edits and totals match the
+  // Excel view and the export; values carry data-r/data-c, so clicking one types into that cell.
+  const TYPE_COLORS = ["#1f3864", "#0f766e", "#b45309", "#7c3aed", "#e8590c", "#0284c7", "#be185d", "#4d7c0f"];
+  const Cards = {
+    val: (r, c) => wb.value(DETAILED, r, SheetView.colNum(c)),
+    num(r, c) { const v = this.val(r, c); return typeof v === "number" ? v : null; },
+    text(r, c) {
+      const v = this.val(r, c);
+      if (v === null || v === undefined || v === "") return "";
+      const f = SheetView.format(v, wb.xf(wb.sheet(DETAILED), r, SheetView.colNum(c)).fmt);
+      return `${f.left ?? ""}${f.text}`.trim();
+    },
+    // One figure: label over value. Editable figures open the editor on click.
+    cell(r, c, label, shown, cls = "") {
+      const cc = SheetView.colNum(c);
+      const edit = isEditable(r, cc), edited = isEdited(r, cc);
+      return `<div class="cv-f ${cls}"><span>${label}</span><b class="${edit ? "cv-edit" : ""} ${edited ? "xl-edited" : ""}" data-r="${r}" data-c="${cc}"`
+        + `${edit ? ` title="Click to change"` : ""}>${shown || "–"}</b></div>`;
+    },
+    pct(r, c) { const v = this.num(r, c); return v === null ? "" : fmt.pct(v); },
+    gain(r) {
+      const inv = this.num(r, "D") || 0, cur = this.num(r, "J") ?? this.num(r, "G") ?? 0;
+      return cur - inv;
+    },
+    stats(r) {
+      return this.statsOf({ inv: this.num(r, "D") ?? 0, cur: this.num(r, "J") ?? this.num(r, "G") ?? 0, ret: this.pct(r, "L"), xirr: this.pct(r, "K"), sip: this.num(r, "O") ?? 0 });
+    },
+    statsOf({ inv, cur, ret, xirr, sip }) {
+      const g = cur - inv;
+      return `<div class="cv-stats">
+        <div><span>Invested</span><b>${fmt.money(inv)}</b></div>
+        <div><span>Current value</span><b>${fmt.money(cur)}</b></div>
+        <div class="${g < 0 ? "cv-down" : "cv-up"}"><span>Gain</span><b>${fmt.money(g)}</b></div>
+        <div><span>Abs. return</span><b>${ret || "–"}</b></div>
+        <div><span>XIRR</span><b>${xirr || "–"}</b></div>
+        <div><span>Live SIP</span><b>${fmt.money(sip)}</b></div>
+      </div>`;
+    },
+    scheme(r) {
+      const g = (this.num(r, "G") || 0) - (this.num(r, "D") || 0);
+      const ret = this.pct(r, "L");
+      return `<article class="cv-scheme">
+        <div class="cv-shead" data-r="${r}" data-c="2" title="Right-click to change the fund type or leave it out">
+          <span class="cv-no">${this.text(r, "A")}</span><h4>${esc(this.text(r, "B") || "Scheme")}</h4>
+          ${ret ? `<span class="cv-pill ${g < 0 ? "cv-down" : "cv-up"}">${ret}</span>` : ""}
+        </div>
+        ${this.cell(r, "C", "Sub type", esc(this.text(r, "C")), "cv-wide")}
+        <div class="cv-main">
+          ${this.cell(r, "D", "Invested", this.num(r, "D") === null ? "" : fmt.money(this.num(r, "D")))}
+          ${this.cell(r, "G", "Current value", this.num(r, "G") === null ? "" : fmt.money(this.num(r, "G")))}
+        </div>
+        <div class="cv-grid">
+          ${this.cell(r, "F", "Units", this.text(r, "F"))}
+          ${this.cell(r, "K", "XIRR", this.pct(r, "K"))}
+          ${this.cell(r, "M", "Holding", this.pct(r, "M"))}
+          ${this.cell(r, "N", "Tenure", esc(this.text(r, "N")))}
+          ${this.cell(r, "O", "Live SIP", this.num(r, "O") === null ? "" : fmt.money(this.num(r, "O")))}
+          ${this.cell(r, "P", "New SIP", this.num(r, "P") === null ? "" : fmt.money(this.num(r, "P")))}
+        </div>
+        ${this.cell(r, "T", "Remarks", esc(this.text(r, "T")), "cv-wide cv-note")}
+        ${this.cell(r, "U", "Suggestions", esc(this.text(r, "U")), "cv-wide cv-note")}
+      </article>`;
+    },
+    rowsOf: (g) => [...schemeRows.keys()].filter((x) => x >= g.first && x <= g.last).sort((a, b) => a - b),
+    cur(r) { return this.num(r, "J") ?? this.num(r, "G") ?? 0; },
+    initials: (t) => t.split(/\s+/).filter((w) => /^[A-Za-z]/.test(w)).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "•",
+    // One platform inside a fund type: its figures, then all its scheme cards.
+    platform(e, typeValue) {
+      const { g, platform, color } = e;
+      const open = openGroups.has(g.id);
+      const rows = this.rowsOf(g);
+      const value = this.cur(g.total);
+      const share = typeValue ? Math.max(0, Math.min(100, (value / typeValue) * 100)) : 0;
+      const gain = this.gain(g.total);
+      return `<div class="cv-group ${open ? "open" : ""}">
+        <div class="cv-ghead" data-r="${g.head}" data-c="2" role="button" aria-expanded="${open}" title="${open ? "Hide" : "Show"} the schemes">
+          <span class="cv-caret">${open ? "▾" : "▸"}</span>
+          <div class="cv-gname"><i class="cv-plogo cv-c${color % 3}">${esc(this.initials(platform))}</i><div><b>${esc(platform)}</b><span>${rows.length} scheme${rows.length === 1 ? "" : "s"}</span></div></div>
+          <div class="cv-bar" title="${share.toFixed(1)}% of this fund type"><i style="width:${share}%"></i></div>
+          <div class="cv-gnum"><span>Invested</span><b>${fmt.money(this.num(g.total, "D") ?? 0)}</b></div>
+          <div class="cv-gnum"><span>Current</span><b>${fmt.money(value)}</b></div>
+          <div class="cv-gnum ${gain < 0 ? "cv-down" : "cv-up"}"><span>Return</span><b>${this.pct(g.total, "L") || "–"}</b></div>
+        </div>
+        ${open ? `<div class="cv-schemes">${rows.map((r) => this.scheme(r)).join("") || '<p class="cv-empty">No schemes.</p>'}</div>` : ""}
+      </div>`;
+    },
+    // Fund types first (Equity, Hybrid, Debt, Others, then Stocks, PMS…), each with its platforms.
+    types() {
+      const out = new Map();
+      blocks.forEach((b, bi) => {
+        if (b.loans) return;
+        const [platform, product = ""] = this.text(b.head, "B").split(" · ");
+        for (const id of b.folds) {
+          const g = groups.find((x) => x.id === id);
+          if (!g) continue;
+          const parts = id.split("|");
+          const mf = parts[1] === "MF";
+          const key = mf ? `MF|${parts[2]}` : parts[1];
+          if (!out.has(key)) out.set(key, { name: mf ? parts[2] : product || parts[1], kind: mf ? "Mutual funds" : "", entries: [] });
+          out.get(key).entries.push({ g, platform, color: bi });
+        }
+      });
+      const order = (k) => { const i = Review.MF_TYPES.indexOf(k.replace(/^MF\|/, "")); return k.startsWith("MF|") && i >= 0 ? i : 100; };
+      return [...out.entries()].sort((a, b) => order(a[0]) - order(b[0])).map(([, t]) => t);
+    },
+    type(t, i) {
+      const totals = t.entries.map((e) => e.g.total);
+      const inv = totals.reduce((a, r) => a + (this.num(r, "D") ?? 0), 0);
+      const cur = totals.reduce((a, r) => a + this.cur(r), 0);
+      const sip = totals.reduce((a, r) => a + (this.num(r, "O") ?? 0), 0);
+      const w = totals.filter((r) => this.num(r, "K") !== null && this.cur(r));
+      const wv = w.reduce((a, r) => a + this.cur(r), 0);
+      const xirr = wv ? fmt.pct(w.reduce((a, r) => a + this.num(r, "K") * this.cur(r), 0) / wv) : "";
+      const count = t.entries.reduce((a, e) => a + this.rowsOf(e.g).length, 0);
+      const np = t.entries.length;
+      return `<section class="cv-block">
+        <header class="cv-head">
+          <div class="cv-logo cv-t${i % 6}">${esc(t.name.slice(0, 1).toUpperCase())}</div>
+          <div class="cv-title"><h3>${esc(t.name)}</h3><span>${t.kind ? `${t.kind} · ` : ""}${np} platform${np === 1 ? "" : "s"} · ${count} scheme${count === 1 ? "" : "s"}</span></div>
+          ${this.statsOf({ inv, cur, sip, xirr, ret: inv ? fmt.pct(((cur - inv) / inv) * 100) : "" })}
+        </header>
+        <div class="cv-groups">${t.entries.map((e) => this.platform(e, cur)).join("")}</div>
+      </section>`;
+    },
+    loans(b) {
+      return `<section class="cv-block cv-loans"><header class="cv-head"><div class="cv-title"><h3>${esc(this.text(b.head, "B"))}</h3></div></header>
+        <div class="cv-loanlist">${b.loans.map((r) => `<div><span>${esc(this.text(r, "B"))}</span><b>${fmt.money(this.num(r, "G") ?? 0)}</b></div>`).join("")}</div></section>`;
+    },
+    render(host) {
+      const scroll = host.scrollTop;
+      const total = grandRow ? `<section class="cv-total">
+          <div class="cv-title"><span>Total portfolio</span><h3>${esc(data.clientName)}</h3></div>
+          ${this.stats(grandRow)}
+        </section>` : "";
+      // Where the money sits: one bar across the fund types.
+      const types = this.types();
+      const parts = types.map((t) => ({ name: t.name, v: Math.max(0, t.entries.reduce((a, e) => a + this.cur(e.g.total), 0)) }));
+      const sum = parts.reduce((a, x) => a + x.v, 0);
+      const COLORS = TYPE_COLORS;
+      const mix = sum && parts.length > 1 ? `<section class="cv-mix"><h3>Portfolio by fund type</h3>
+          <div class="cv-mixbar">${parts.map((x, i) => `<i style="width:${(x.v / sum) * 100}%;background:${COLORS[i % COLORS.length]}" title="${esc(x.name)}"></i>`).join("")}</div>
+          <div class="cv-legend">${parts.map((x, i) => `<span style="--dot:${COLORS[i % COLORS.length]}">${esc(x.name)} <b>${fmt.money(x.v)}</b> ${((x.v / sum) * 100).toFixed(1)}%</span>`).join("")}</div>
+        </section>` : "";
+      host.innerHTML = `<div class="cv" style="zoom:${zoom}">${mix}${types.map((t, i) => this.type(t, i)).join("")
+        || '<div class="card empty-state"><h2>No holdings</h2><p>Upload this client\'s portfolio to see it here.</p></div>'}${blocks.filter((b) => b.loans).map((b) => this.loans(b)).join("")}${total}</div>`;
+      host.scrollTop = scroll;
+    },
+  };
 
   // Totals with the changes, for the header.
   function kpis() {
@@ -297,7 +456,7 @@ const ReviewPage = (() => {
     if (!host) return;
     host.querySelectorAll(".xl-sel").forEach((x) => x.classList.remove("xl-sel"));
     if (!sel) { $("xlName").textContent = ""; $("xlFx").value = ""; $("xlFx").readOnly = true; return; }
-    const td = host.querySelector(`td[data-r="${sel.r}"][data-c="${sel.c}"]`);
+    const td = host.querySelector(`[data-r="${sel.r}"][data-c="${sel.c}"]`);
     if (td) td.classList.add("xl-sel");
     $("xlName").textContent = SheetView.refOf(sel.r, sel.c);
     $("xlFx").value = rawText(sel.r, sel.c);
@@ -316,8 +475,8 @@ const ReviewPage = (() => {
     // Skip hidden rows and columns.
     const host = $("xlHost");
     let rr = r, cc = c;
-    for (let i = 0; i < 50 && !host.querySelector(`td[data-r="${rr}"][data-c="${cc}"]`); i++) { rr += dr; cc += dc; if (rr < 1 || cc < 1) return; }
-    if (!host.querySelector(`td[data-r="${rr}"][data-c="${cc}"]`)) return;
+    for (let i = 0; i < 50 && !host.querySelector(`[data-r="${rr}"][data-c="${cc}"]`); i++) { rr += dr; cc += dc; if (rr < 1 || cc < 1) return; }
+    if (!host.querySelector(`[data-r="${rr}"][data-c="${cc}"]`)) return;
     select(rr, cc);
     host.querySelector(".xl-sel")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
@@ -335,7 +494,7 @@ const ReviewPage = (() => {
   function openEditor(initial) {
     if (!sel) return;
     if (!isEditable(sel.r, sel.c)) { setStatus(readOnlyReason(sel.r, sel.c), "warn"); return; }
-    const td = $("xlHost").querySelector(`td[data-r="${sel.r}"][data-c="${sel.c}"]`);
+    const td = $("xlHost").querySelector(`[data-r="${sel.r}"][data-c="${sel.c}"]`);
     if (!td) return;
     const rect = td.getBoundingClientRect();
     closeEditor(false);
