@@ -299,7 +299,11 @@
         else if (P.dates.has(field) || (field === "sip_day" && val instanceof Date)) rec[field] = parseDate(val);
         else rec[field] = String(val).split(/\s+/).filter(Boolean).join(" ");
       }
-      if (mapping.summary) { rec.level = "summary"; rec.security_name = SUMMARY_LABEL; }
+      if (mapping.summary) {
+        // "Grand Total:" can sit in any column of an investor-wise report.
+        if (!rec.client_name || row.some((c) => typeof c === "string" && TOTAL_ROW.test(c.trim()))) continue;
+        rec.level = "summary"; rec.security_name = SUMMARY_LABEL;
+      }
       const label = rec.security_name || rec.identifier || rec.isin || "";
       if (!label || TOTAL_ROW.test(label) || P.synonyms.security_name.includes(norm(label))) continue;
       if (!P.requiredAny.some((f) => rec[f] !== null)) continue;
