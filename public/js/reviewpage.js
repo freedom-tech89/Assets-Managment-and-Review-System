@@ -15,6 +15,7 @@ const ReviewPage = (() => {
 
   let data = null, edits = {}, wb = null, schemeRows = new Map(), names = new Map();
   let groups = [], openGroups = new Set(); // DETAILED PORTFOLIO blocks; folded unless opened
+  let openCards = new Set(); // dashboard cards opened with their dropdown (fund types, sections)
   let foldsSet = false; // the card view starts with every scheme shown
   let blocks = [], grandRow = null; // DETAILED PORTFOLIO platform blocks, for the card view
   // Sheets whose hidden columns hold client figures, so the page shows them.
@@ -97,7 +98,8 @@ const ReviewPage = (() => {
     names = new Map([...prep.raw.holdings, ...prep.raw.sips].map((r) => [Review.rowKey(r), r.security_name || "Scheme"]));
     foldsSet = false;
     openGroups = new Set();
-    shownEmpty = new Set();
+    openCards = new Set();
+    seeded = new Set();
     shell();
     active = true;
     await rebuild();
@@ -153,10 +155,17 @@ const ReviewPage = (() => {
     $("xlOut").addEventListener("click", (e) => leftOutMenu(e));
     view.querySelectorAll("[data-fold]").forEach((b) => b.addEventListener("click", () => {
       openGroups = b.dataset.fold === "open" ? new Set(groups.map((g) => g.id)) : new Set();
+      openCards = b.dataset.fold === "open" ? new Set([...openCards, ...[...$("xlHost").querySelectorAll("[data-toggle]")].map((x) => x.dataset.toggle)]) : new Set();
       draw();
     }));
     const host = $("xlHost");
     host.addEventListener("click", (e) => {
+      const tg = e.target.closest("[data-toggle]");
+      if (tg && !e.target.closest("[data-r][data-c], button")) {
+        if (openCards.has(tg.dataset.toggle)) openCards.delete(tg.dataset.toggle); else openCards.add(tg.dataset.toggle);
+        draw();
+        return;
+      }
       const td = e.target.closest("[data-r][data-c]");
       if (!td) return;
       const r = Number(td.dataset.r);
@@ -234,7 +243,7 @@ const ReviewPage = (() => {
     if (detailed && !excelView) Cards.render(host);
     else if (!excelView && Pages[sheetName]) Pages[sheetName](host);
     else SheetView.render(wb, sheetName, host, { zoom, modern: !excelView, isEdited, isEditable, hideRows, showHidden: SHOW_HIDDEN.has(sheetName), decorate: detailed ? decorate : null });
-    $("xlFolds").hidden = !detailed || !groups.length;
+    $("xlFolds").hidden = !(detailed && groups.length) && !host.querySelector("[data-toggle]");
     host.scrollLeft = scroll.x;
     host.scrollTop = scroll.y;
     $("xlZoom").textContent = `${Math.round(zoom * 100)}%`;
@@ -372,13 +381,15 @@ const ReviewPage = (() => {
       const xirr = wv ? fmt.pct(w.reduce((a, r) => a + this.num(r, "K") * this.cur(r), 0) / wv) : "";
       const count = t.entries.reduce((a, e) => a + this.rowsOf(e.g).length, 0);
       const np = t.entries.length;
-      return `<section class="cv-block">
-        <header class="cv-head">
+      const key = `type|${t.name}`, open = openCards.has(key);
+      return `<section class="cv-block ${open ? "" : "cv-closed"}">
+        <header class="cv-head cv-toggle" data-toggle="${esc(key)}" role="button" aria-expanded="${open}" title="${open ? "Hide" : "Show"} the platforms">
           <div class="cv-logo cv-t${i % 6}">${esc(t.name.slice(0, 1).toUpperCase())}</div>
           <div class="cv-title"><h3>${esc(t.name)}</h3><span>${t.kind ? `${t.kind} · ` : ""}${np} platform${np === 1 ? "" : "s"} · ${count} scheme${count === 1 ? "" : "s"}</span></div>
           ${this.statsOf({ inv, cur, sip, xirr, ret: inv ? fmt.pct(((cur - inv) / inv) * 100) : "" })}
+          <span class="cv-drop">${open ? "▴" : "▾"}</span>
         </header>
-        <div class="cv-groups">${t.entries.map((e) => this.platform(e, cur)).join("")}</div>
+        ${open ? `<div class="cv-groups">${t.entries.map((e) => this.platform(e, cur)).join("")}</div>` : ""}
       </section>`;
     },
     loans(b) {
@@ -387,10 +398,6 @@ const ReviewPage = (() => {
     },
     render(host) {
       const scroll = host.scrollTop;
-      const total = grandRow ? `<section class="cv-total">
-          <div class="cv-title"><span>Total portfolio</span><h3>${esc(data.clientName)}</h3></div>
-          ${this.stats(grandRow)}
-        </section>` : "";
       // Where the money sits: one bar across the fund types.
       const types = this.types();
       const parts = types.map((t) => ({ name: t.name, v: Math.max(0, t.entries.reduce((a, e) => a + this.cur(e.g.total), 0)) }));
@@ -401,15 +408,14 @@ const ReviewPage = (() => {
           <div class="cv-legend">${parts.map((x, i) => `<span style="--dot:${COLORS[i % COLORS.length]}">${esc(x.name)} <b>${fmt.money(x.v)}</b> ${((x.v / sum) * 100).toFixed(1)}%</span>`).join("")}</div>
         </section>` : "";
       host.innerHTML = `<div class="cv" style="zoom:${zoom}">${mix}${types.map((t, i) => this.type(t, i)).join("")
-        || '<div class="card empty-state"><h2>No holdings</h2><p>Upload this client\'s portfolio to see it here.</p></div>'}${blocks.filter((b) => b.loans).map((b) => this.loans(b)).join("")}${total}</div>`;
+        || '<div class="card empty-state"><h2>No holdings</h2><p>Upload this client\'s portfolio to see it here.</p></div>'}${blocks.filter((b) => b.loans).map((b) => this.loans(b)).join("")}</div>`;
       host.scrollTop = scroll;
     },
   };
 
-  // The other sheets in the dashboard look, as cards. Sections of a sheet are drawn by
-  // SheetView with only their rows and columns, so cells stay clickable and editable as in the
-  // Excel view; Cover and Summary are built from their cells.
-  let shownEmpty = new Set(); // Portfolio Journey platforms with no values, opened to type in
+  // The other sheets in the dashboard look, as cards built from their cells. Every value carries
+  // data-r/data-c, so it stays clickable and editable as in the Excel view.
+  let seeded = new Set(); // card pages whose cards have been opened by default once
   const Pages = {
     v: (r, c) => wb.value(sheetName, r, c),
     t(r, c) {
@@ -425,19 +431,7 @@ const ReviewPage = (() => {
       const e = isEditable(r, c);
       return `<b class="${cls} ${e ? "cv-edit" : ""} ${isEdited(r, c) ? "xl-edited" : ""}" data-r="${r}" data-c="${c}"${e ? ' title="Click to change"' : ""}>${esc(this.t(r, c)) || "–"}</b>`;
     },
-    // Cards of sheet rows: [{title, sub, rows: [], cols: [], text(r, c), colW, empty}].
-    sections(host, list, top = "") {
-      host.innerHTML = `<div class="cv" style="zoom:${zoom}">${top}${list.map((x, i) => `<section class="cv-block cv-sheet ${x.empty ? "cv-emptyblock" : ""}">
-          ${x.title ? `<header class="cv-head"><div class="cv-title"><h3>${esc(x.title)}</h3>${x.sub ? `<span>${x.sub}</span>` : ""}</div>${x.empty ? `<button type="button" class="xl-btn" data-show="${esc(x.title)}">Add values</button>` : ""}</header>` : ""}
-          ${x.empty ? "" : `<div class="cv-body" data-i="${i}"></div>`}
-        </section>`).join("")}</div>`;
-      host.querySelectorAll(".cv-body").forEach((el) => {
-        const x = list[el.dataset.i];
-        SheetView.render(wb, sheetName, el, { zoom: 1, modern: true, isEdited, isEditable, showHidden: SHOW_HIDDEN.has(sheetName),
-          rows: new Set(x.rows), cols: x.cols && new Set(x.cols), text: x.text, colW: x.colW });
-      });
-      host.querySelectorAll("[data-show]").forEach((b) => b.addEventListener("click", () => { shownEmpty.add(b.dataset.show); draw(); }));
-    },
+    initials: (t) => t.split(/\s+/).filter((w) => /^[A-Za-z]/.test(w)).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "•",
     findRow(c, re, from = 1) {
       const sh = wb.sheet(sheetName);
       for (let r = from; r <= sh.maxRow; r++) if (re.test(this.t(r, c))) return r;
@@ -475,78 +469,249 @@ const ReviewPage = (() => {
       </div>`;
     },
 
-    // Portfolio Journey: a card per platform and per section, with the years up to the review.
+    // ---- Shared pieces for the card pages ----
+    str(r, c) { const x = wb.raw(sheetName, r, c); return x && !x.f && typeof x.v === "string" && x.v.trim() ? x.v.trim() : null; },
+    filled(r, cols) { return cols.some((c) => { const v = this.v(r, c); return v !== null && v !== undefined && v !== "" && v !== 0; }); },
+    stat: (label, value, cls = "") => `<div class="${cls}"><span>${esc(label)}</span><b>${value}</b></div>`,
+    // A card that opens with its dropdown. o: {key, logo, logoCls, title, sub, stats, body() (only built when open), dim}.
+    drop(o) {
+      const open = openCards.has(o.key);
+      return `<section class="cv-block ${open ? "" : "cv-closed"} ${o.dim ? "cv-dim" : ""}">
+        <header class="cv-head cv-toggle" data-toggle="${esc(o.key)}" role="button" aria-expanded="${open}">
+          ${o.logo ? `<div class="cv-logo ${o.logoCls || ""}">${esc(o.logo)}</div>` : ""}
+          <div class="cv-title"><h3>${esc(o.title)}</h3>${o.sub ? `<span>${o.sub}</span>` : ""}</div>
+          ${o.stats ? `<div class="cv-stats cv-stats-auto">${o.stats}</div>` : ""}
+          <span class="cv-drop">${open ? "▴" : "▾"}</span>
+        </header>
+        ${open ? `<div class="cv-inner">${o.body()}</div>` : ""}
+      </section>`;
+    },
+    // A clean table of cells: rows [{r, label, cls}], cols [{c, label}]; values type into their cells.
+    table(rows, cols, opts = {}) {
+      return `<div class="cv-tablewrap"><table class="cv-table ${opts.cls || ""}"><thead><tr>${opts.noLabel ? "" : `<th>${esc(opts.corner || "")}</th>`}${cols.map((x) => `<th>${esc(x.label)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((x) => `<tr class="${x.cls || ""}">${opts.noLabel ? "" : `<th>${esc(x.label)}</th>`}${cols.map((k) => `<td class="${typeof this.v(x.r, k.c) === "number" || !this.str(x.r, k.c) ? "cv-num" : ""}">${this.val(x.r, k.c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    },
+    seed(sheet, keys) {
+      if (seeded.has(sheet)) return;
+      seeded.add(sheet);
+      for (const k of keys) openCards.add(k);
+    },
+    page(host, html) {
+      host.innerHTML = `<div class="cv" style="zoom:${zoom}">${html}</div>`;
+    },
+
+    // Portfolio Journey: like DETAILED PORTFOLIO. A "wealth by year" card, then a card per section
+    // (mutual funds, stocks, other savings, passive income) that opens to its platforms or items;
+    // each opens to its rows by year, which can be typed into.
     "Portfolio Journey"(host) {
       const sh = wb.sheet(sheetName);
       const start = this.n(5, 6) || 0, rd = this.n(2, 7);
       const year = rd ? SheetView.fromSerial(rd).getUTCFullYear() : start;
-      let last = 6 + Math.max(0, year - start);
-      for (const x of sh.cells.values()) if (x.r > 5 && x.c > last && typeof x.v === "number" && !x.f) last = x.c;
-      const cols = [2, 3, 4, 5, ...this.range(6, last)];
       const yc = 6 + Math.max(0, year - start);
-      // The platform's name is the card's title, so its cell in the table is left blank.
-      const head = (label, r1) => (r, c) => ((r === 5 || r === r1) && c === 2 ? label : undefined);
-      const colW = { 4: 170, 5: 190, ...Object.fromEntries(this.range(6, last).map((c) => [c, 120])) };
-      const has = (a, b) => this.range(a, b).some((r) => this.range(6, last).some((c) => { const x = wb.raw(sheetName, r, c); return x && !x.f && typeof x.v === "number" && x.v; }));
-      const stocks = this.findRow(2, /^STOCKS$/i, 6) || sh.maxRow + 1;
-      const total = this.findRow(2, /^TOTAL$/i, 6);
-      const list = [];
-      for (const m of sh.merges.filter((m) => m.c1 === 2 && m.r1 > 5 && m.r2 < (total || stocks)).sort((a, b) => a.r1 - b.r1)) {
-        const name = this.t(m.r1, 2);
-        const empty = !has(m.r1, m.r2) && !shownEmpty.has(name);
-        list.push({ title: name, sub: empty ? "Mutual funds · no values yet" : `Mutual funds · ${fmt.money(this.n(m.r2 - 1, yc) ?? 0)} in ${year}`, rows: [5, ...this.range(m.r1, m.r2)], cols, colW, text: head("", m.r1), empty });
-      }
-      const secs = [
-        [total, stocks - 1, "All mutual funds", "Totals across platforms"],
-        [stocks + 1, (this.findRow(2, /^OTHER SAVINGS/i, stocks) || 0) - 1, "Stocks & PMS", ""],
-      ];
-      const other = this.findRow(2, /^OTHER SAVINGS/i, stocks), grand = this.findRow(2, /^Grand Total Portfolio Value/i, stocks);
-      const passive = this.findRow(2, /^Existing Passive Income/i, stocks);
-      if (other) secs.push([other + 1, (grand || sh.maxRow + 1) - 1, "Other savings & investments", ""]);
-      if (grand) secs.push([grand, (passive || sh.maxRow + 1) - 1, "Grand total", "All assets"]);
-      if (passive) secs.push([passive + 1, sh.maxRow, "Passive income", "Existing monthly provision"]);
-      for (const [a, b, title, sub] of secs) {
-        if (!a || b < a) continue;
-        const rows = this.range(a, b).filter((r) => this.t(r, 2) || this.t(r, 4) || this.t(r, 5));
-        list.push({ title, sub, rows: [5, ...rows], cols, colW, text: head("") });
-      }
-      this.sections(host, list);
+      let last = yc;
+      for (const x of sh.cells.values()) if (x.r > 5 && x.c > last && typeof x.v === "number" && !x.f && x.v) last = x.c;
+      const years = this.range(6, last).map((c) => ({ c, label: this.t(5, c) }));
+      const ycols = years.map((y) => y.c);
+      const label = (r) => this.str(r, 5) || this.str(r, 4) || this.t(r, 4) || this.t(r, 2);
+      const money = (r, c = yc) => fmt.money(this.n(r, c) ?? 0);
+      const growth = (r) => {
+        const a = this.n(r, yc - 1), b = this.n(r, yc);
+        if (yc <= 6 || !a || b === null) return "";
+        const g = ((b - a) / Math.abs(a)) * 100;
+        return `<span class="cv-pill ${g < 0 ? "cv-down" : "cv-up"}">${g >= 0 ? "▲" : "▼"} ${Math.abs(g).toFixed(1)}%</span>`;
+      };
+      const find = (re, from = 6) => this.findRow(2, re, from);
+      const stocks = find(/^STOCKS$/i), other = find(/^OTHER SAVINGS/i), grand = find(/^Grand Total Portfolio Value/i), passive = find(/^Existing Passive Income/i);
+      const SECTION_ROW = /^(Total\s+\S|Grand Total|Redemption|Reason|Withdrawal|Remarks)/i;
+      // Items of a section: a new one starts at each name in column B.
+      const parse = (a, b) => {
+        const items = [], extra = [];
+        let cur = null;
+        for (let r = a; r <= b; r++) {
+          const name = this.str(r, 2);
+          if (name && SECTION_ROW.test(name)) { cur = null; extra.push(r); continue; }
+          if (name) { cur = { name, rows: [] }; items.push(cur); }
+          if (cur && label(r)) cur.rows.push(r);
+        }
+        return { items, extra };
+      };
+      const item = (sec, it, i) => {
+        const key = `pj|${sec}|${it.name}`, open = openCards.has(key);
+        const total = it.rows.find((r) => this.str(r, 4) && !this.str(r, 5) && it.rows.length > 2 && /Portfolio Value$/i.test(this.str(r, 4)));
+        const head = it.head ?? total ?? it.rows[0];
+        const sip = it.sip ?? it.rows.find((r) => r !== head && /SIP|Monthly|Contribution/i.test(label(r)) && (!total || !this.str(r, 5)));
+        const any = it.rows.some((r) => this.filled(r, ycols));
+        const chips = years.map((y) => `<span class="cv-chip ${y.c === yc ? "on" : ""}"><small>${esc(y.label)}</small>${money(head, y.c)}</span>`).join("");
+        return `<div class="cv-group ${open ? "open" : ""} ${any ? "" : "cv-dim"}">
+          <div class="cv-ghead cv-jhead" data-toggle="${esc(key)}" role="button" aria-expanded="${open}">
+            <span class="cv-caret">${open ? "▾" : "▸"}</span>
+            <div class="cv-gname"><i class="cv-plogo cv-c${i % 3}">${esc(this.initials(it.name))}</i><div><b>${esc(it.name)}</b><span>${any ? esc(label(head)) : "No values yet · click to add"}</span></div></div>
+            <div class="cv-chips">${chips}</div>
+            <div class="cv-gnum"><span>${esc(String(year))}</span><b>${money(head)}</b>${growth(head)}</div>
+            ${sip ? `<div class="cv-gnum"><span>${/SIP/i.test(label(sip)) ? "Live SIP" : "Monthly"}</span><b>${money(sip)}</b></div>` : "<div></div>"}
+          </div>
+          ${open ? `<div class="cv-schemes cv-one">${this.table(it.rows.map((r) => ({ r, label: label(r), cls: r === total ? "cv-trow" : "" })), years, { corner: "By year" })}</div>` : ""}
+        </div>`;
+      };
+      const sections = [];
+      const sec = (key, title, logo, a, b, sub) => {
+        if (!a || b < a) return;
+        const { items, extra } = parse(a, b);
+        const stats = extra.filter((r) => /^(Total|Grand Total)/i.test(this.str(r, 2)) && this.n(r, yc) !== null);
+        const notes = extra.filter((r) => !stats.includes(r));
+        // The TOTAL block of mutual funds: the totals by fund type, across platforms.
+        for (const it of items) if (/^TOTAL$/i.test(it.name)) { it.name = "All platforms"; it.head = stats[0]; it.sip = stats[1]; }
+        sections.push(this.drop({ key: `pj|${key}`, logo, logoCls: `cv-t${sections.length % 6}`, title,
+          sub: `${sub} · ${items.length} ${key === "passive" ? "source" : "item"}${items.length === 1 ? "" : "s"}`,
+          stats: stats.slice(0, 2).map((r) => this.stat(this.str(r, 2).replace(/\s*\(.*\)$/, ""), money(r))).join(""),
+          body: () => `<div class="cv-groups">${items.map((it, i) => item(key, it, i)).join("")}</div>
+            ${notes.length ? `<div class="cv-notes">${this.table(notes.map((r) => ({ r, label: this.str(r, 2) })), years, { corner: "Notes", cls: "cv-table-notes" })}</div>` : ""}` }));
+      };
+      sec("mf", "Mutual funds", "M", 6, (stocks || sh.maxRow + 1) - 1, "By platform");
+      sec("stocks", "Stocks & PMS", "S", stocks && stocks + 1, (other || sh.maxRow + 1) - 1, "By platform");
+      sec("other", "Other savings & investments", "O", other && other + 1, (grand || passive || sh.maxRow + 1) - 1, "EPF, PPF, FD, NPS, gold and more");
+      sec("passive", "Passive income", "P", passive && passive + 1, sh.maxRow, "Existing monthly provision");
+      // Wealth by year, from the grand total rows.
+      const gRows = grand ? this.range(grand, (passive || grand + 3) - 1).filter((r) => this.str(r, 2)) : [];
+      const tiles = gRows.length ? `<section class="cv-block cv-years"><header class="cv-head"><div class="cv-logo cv-t0">₹</div><div class="cv-title"><h3>Wealth by year</h3><span>All assets, up to the review year</span></div></header>
+        <div class="cv-yeargrid">${years.map((y, i) => {
+          const v = this.n(gRows[0], y.c), p = i ? this.n(gRows[0], y.c - 1) : null;
+          const g = p ? ((v - p) / Math.abs(p)) * 100 : null;
+          return `<div class="cv-year ${y.c === yc ? "on" : ""}"><span>${esc(y.label)}</span><b>${fmt.money(v ?? 0)}</b>
+            ${g !== null && Number.isFinite(g) ? `<em class="${g < 0 ? "cv-down" : "cv-up"}">${g >= 0 ? "▲" : "▼"} ${Math.abs(g).toFixed(1)}% vs ${esc(years[i - 1].label)}</em>` : "<em>&nbsp;</em>"}
+            ${gRows.slice(1).map((r) => `<small>${esc(this.str(r, 2).replace(/^(Grand )?Total /i, "").replace(/\s*\(.*\)$/, ""))} <i>${fmt.money(this.n(r, y.c) ?? 0)}</i></small>`).join("")}</div>`;
+        }).join("")}</div></section>` : "";
+      this.page(host, tiles + sections.join(""));
     },
 
-    // Summary Portfolio: a card per platform with one row per upload date.
+    // Summary Portfolio: a "review history" card (wealth, invested, gain and SIP on each review
+    // date), then a card per platform that opens to its figures by date.
     "SUMMARY PORTFOLIO"(host) {
       const sh = wb.sheet(sheetName);
-      const rows = this.range(3, sh.maxRow).filter((r) => this.v(r, 1) !== null && this.v(r, 1) !== "");
-      const groups = sh.merges.filter((m) => m.r1 === 1).sort((a, b) => a.c1 - b.c1);
-      const filled = [], empty = [];
-      for (const m of groups) {
-        const any = rows.some((r) => this.range(m.c1, m.c2).some((c) => { const v = this.n(r, c); return v !== null && v !== 0; }));
-        (any ? filled : empty).push(m);
-      }
-      const list = filled.map((m) => ({ title: this.t(1, m.c1), sub: `${rows.length} review date${rows.length === 1 ? "" : "s"}`, rows: [2, ...rows], cols: [1, 2, ...this.range(m.c1, m.c2)], colW: { 1: 104, 2: 150, ...Object.fromEntries(this.range(m.c1, m.c2).map((c) => [c, 96])) } }));
-      const blank = empty.map((m) => this.t(1, m.c1)).filter(Boolean);
-      const note = blank.length ? `<p class="cv-note-line">No figures yet for ${blank.map(esc).join(", ")}. Use Excel view to type them in.</p>` : "";
-      this.sections(host, list);
-      if (note) host.querySelector(".cv").insertAdjacentHTML("beforeend", note);
+      const dates = this.range(3, sh.maxRow).filter((r) => this.v(r, 1) !== null && this.v(r, 1) !== "");
+      const groups = sh.merges.filter((m) => m.r1 === 1 && this.t(1, m.c1)).sort((a, b) => a.c1 - b.c1)
+        .map((m) => ({ title: this.t(1, m.c1), cols: this.range(m.c1, m.c2).filter((c) => this.t(2, c)) }));
+      const head = (c) => this.t(2, c);
+      const colOf = (g, re) => [...g.cols].reverse().find((c) => re.test(head(c)));
+      const latest = dates[dates.length - 1];
+      const grandG = groups.find((g) => /GRAND TOTAL/i.test(g.title));
+      const firmG = groups.find((g) => /TOTAL PORTFOLIO/i.test(g.title) && g !== grandG);
+      const inv = grandG && colOf(grandG, /INVESTED/i), wealth = grandG && colOf(grandG, /WEALTH|VALUE/i), gain = grandG && colOf(grandG, /GAIN/i);
+      const sipC = firmG && colOf(firmG, /SIP/i);
+      const hist = dates.length ? `<section class="cv-block cv-years"><header class="cv-head"><div class="cv-logo cv-t0">₹</div><div class="cv-title"><h3>Review history</h3><span>${dates.length} review date${dates.length === 1 ? "" : "s"}</span></div></header>
+        <div class="cv-yeargrid">${dates.map((r, i) => {
+          const v = wealth ? this.n(r, wealth) : null, p = i && wealth ? this.n(dates[i - 1], wealth) : null;
+          const g = p ? ((v - p) / Math.abs(p)) * 100 : null;
+          return `<div class="cv-year ${r === latest ? "on" : ""}"><span>${esc(this.t(r, 1))}</span><b>${fmt.money(v ?? 0)}</b>
+            ${g !== null && Number.isFinite(g) ? `<em class="${g < 0 ? "cv-down" : "cv-up"}">${g >= 0 ? "▲" : "▼"} ${Math.abs(g).toFixed(1)}% since last review</em>` : "<em>&nbsp;</em>"}
+            ${inv ? `<small>Invested <i>${fmt.money(this.n(r, inv) ?? 0)}</i></small>` : ""}
+            ${gain ? `<small>Gain <i>${fmt.money(this.n(r, gain) ?? 0)}</i></small>` : ""}
+            ${sipC ? `<small>Live SIP <i>${fmt.money(this.n(r, sipC) ?? 0)}</i></small>` : ""}</div>`;
+        }).join("")}</div></section>` : "";
+      const cards = groups.map((g, i) => {
+        const any = dates.some((r) => this.filled(r, g.cols));
+        const tot = colOf(g, /WEALTH|PORTFOLIO VALUE/i) || colOf(g, /TOTAL/i), sip = colOf(g, /SIP/i);
+        return this.drop({ key: `sp|${g.title}`, logo: this.initials(g.title.replace(/\b(TOTAL|PORTFOLIO)\b/gi, "").trim() || g.title), logoCls: `cv-t${i % 6}`,
+          title: g.title.replace(/\b\w+/g, (w) => (w.length > 3 || !/^[A-Z]+$/.test(w) ? w[0] + w.slice(1).toLowerCase() : w)), dim: !any,
+          sub: any ? `${g.cols.length} column${g.cols.length === 1 ? "" : "s"} · latest ${esc(this.t(latest, 1))}` : "No figures yet · open to add",
+          stats: any ? [tot && this.stat(head(tot).replace(/^TOTAL\s*/i, "") || "Total", fmt.money(this.n(latest, tot) ?? 0)), sip && sip !== tot && this.stat("Live SIP", fmt.money(this.n(latest, sip) ?? 0))].filter(Boolean).join("") : "",
+          body: () => this.table(dates.map((r) => ({ r, label: this.t(r, 1) })), g.cols.map((c) => ({ c, label: head(c) })), { corner: "Review date" }) });
+      });
+      this.page(host, hist + cards.join(""));
     },
 
-    // Freedom Blueprint: a card per section (A to E, the passive income question, conclusion).
+    // Freedom Blueprint: a card per section. Personal details as a form, the levels as cards
+    // with progress, the asset table as a clean table, and the charts on light cards.
     "Freedom Blueprint"(host) {
       const sh = wb.sheet(sheetName);
+      const COLS = this.range(2, 16);
       const marks = [];
       for (let r = 1; r <= sh.maxRow; r++) {
         const t = this.t(r, 2);
-        if (/^Section [A-Z]\b|^CONCLUSION$/i.test(t)) marks.push({ r, title: t.replace(/\s*:\s*/, " · "), skip: true });
-        else if (/^In How Many Years/i.test(t)) marks.push({ r, title: "", skip: false });
+        if (/^Section [A-Z]\b|^CONCLUSION$/i.test(t)) marks.push({ r, title: t });
+        else if (/^In How Many Years/i.test(t)) marks.push({ r, title: t, question: true });
       }
-      const cols = this.range(1, 16);
-      const list = marks.map((m, i) => {
+      const keys = marks.map((m) => `bp|${m.title}`);
+      this.seed(sheetName, keys);
+      const strCells = (r) => COLS.filter((c) => this.str(r, c));
+      const charts = (a, b) => (wb.drawings[sheetName] || []).filter((d) => d.chart && d.from && d.from.r + 1 >= a && d.from.r + 1 <= b);
+      // Tables in a block of rows: a heading row (3+ text cells), maybe a second heading row, then data rows.
+      const tables = (a, b) => {
+        const out = [];
+        let r = a;
+        while (r <= b) {
+          const hs = strCells(r);
+          if (hs.length < 3 || hs.some((c) => wb.raw(sheetName, r + 1, c)?.f)) { r++; continue; }
+          const cols = hs.map((c) => ({ c, label: this.str(r, c).replace(/\s+/g, " ") }));
+          let d = r + 1;
+          const sub = strCells(d);
+          if (sub.length && sub.every((c) => hs.includes(c)) && !COLS.some((c) => typeof this.v(d, c) === "number")) {
+            for (const x of cols) if (this.str(d, x.c)) x.label += ` · ${this.str(d, x.c).replace(/\s+/g, " ")}`;
+            d++;
+          }
+          const rows = [];
+          let gap = 0;
+          for (; d <= b && gap < 2; d++) {
+            if (this.filled(d, hs) || hs.some((c) => wb.raw(sheetName, d, c))) { rows.push(d); gap = 0; } else if (rows.length) gap++;
+          }
+          out.push({ head: r, cols, rows: rows.filter((x) => this.filled(x, hs)) });
+          r = d;
+        }
+        return out;
+      };
+      const levelCards = (t) => {
+        const [lv, stage, ...rest] = t.cols;
+        const req = rest.find((x) => /Required\s+Wealth/i.test(x.label)), exp = rest.find((x) => /^Expected Wealth/i.test(x.label));
+        return `<div class="cv-levels">${t.rows.map((r) => {
+          const fill = wb.xf(sh, r, lv.c).fill;
+          const p = req && exp && this.n(r, req.c) ? Math.max(0, Math.min(100, ((this.n(r, exp.c) || 0) / this.n(r, req.c)) * 100)) : null;
+          return `<article class="cv-level" style="--lv:#${fill || "E6ECF6"}">
+            <div class="cv-lvhead"><span class="cv-lvchip">${esc(this.t(r, lv.c))}</span><h4>${esc(this.t(r, stage.c))}</h4></div>
+            ${p !== null ? `<div class="cv-prog" title="${p.toFixed(0)}% of the target"><i style="width:${p}%"></i></div><small class="cv-progl">${p >= 100 ? "Reached" : `${p.toFixed(0)}% of the target`}</small>` : ""}
+            <div class="cv-lvfields">${rest.map((x) => `<div class="cv-f ${x.label.length > 40 ? "cv-wide2" : ""}"><span>${esc(x.label)}</span>${this.val(r, x.c)}</div>`).join("")}</div>
+          </article>`;
+        }).join("")}</div>`;
+      };
+      const body = (m, a, b) => {
+        let html = "";
+        if (/Personal/i.test(m.title)) {
+          const fields = [];
+          for (let r = a; r <= b; r++) {
+            const ls = strCells(r).filter((c) => !/^Date\s*:?$/i.test(this.str(r, c)));
+            if (ls.length >= 2) { for (const c of ls) fields.push({ label: this.str(r, c), r: r + 1, c }); r++; }
+          }
+          const dc = COLS.find((c) => /^Date\s*:?$/i.test(this.str(m.r, c) || ""));
+          return `<div class="cv-form">${fields.map((f) => `<div class="cv-f"><span>${esc(f.label)}</span>${this.val(f.r, f.c, "cv-input")}</div>`).join("")}
+            ${dc ? `<div class="cv-f"><span>Review date</span>${this.val(m.r, COLS.find((c) => c > dc && this.v(m.r, c) !== null) || dc + 1, "cv-input")}</div>` : ""}</div>`;
+        }
+        const ts = tables(a, b);
+        const before = ts.length ? ts[0].head : b + 1;
+        const notes = this.range(a, before - 1).flatMap((r) => strCells(r).map((c) => this.str(r, c)));
+        if (notes.length) html += `<p class="cv-lead">${notes.map(esc).join(" ")}</p>`;
+        for (const t of ts) {
+          const isLevels = t.rows.length && t.rows.every((r) => /Level\s*\d/i.test(this.t(r, t.cols[0].c)));
+          html += isLevels ? levelCards(t)
+            : this.table(t.rows.map((r) => ({ r, label: "", cls: /^total$/i.test(this.t(r, t.cols[1]?.c) || this.t(r, t.cols[0].c)) ? "cv-trow" : "" })), t.cols, { noLabel: true, cls: "cv-table-wide" });
+        }
+        const cs = charts(a, b);
+        if (cs.length) html += `<div class="cv-two">${cs.map((d) => `<section class="cv-block cv-chart">${SheetView.chart(wb, d.chart, 640, 330, true)}</section>`).join("")}</div>`;
+        if (!ts.length) {
+          const text = this.range(a, b).flatMap((r) => COLS.filter((c) => this.str(r, c)).map((c) => ({ r, c })));
+          html += text.map((x) => `<p class="cv-text">${this.val(x.r, x.c)}</p>`).join("");
+        }
+        return html;
+      };
+      const cards = marks.map((m, i) => {
         const end = (marks[i + 1]?.r || sh.maxRow + 1) - 1;
-        // Section A's title row also holds the review date.
-        const keepTitle = m.skip && this.range(3, 16).some((c) => c !== 2 && this.t(m.r, c));
-        return { title: m.title, rows: this.range(m.skip && !keepTitle ? m.r + 1 : m.r, end), cols, text: keepTitle ? (r, c) => (r === m.r && c === 2 ? "" : undefined) : undefined };
+        if (m.question) {
+          const vc = COLS.find((c) => c > 2 && this.v(m.r, c) !== null && this.v(m.r, c) !== "");
+          return `<section class="cv-question"><span>${esc(m.title)}</span><div>${this.val(m.r, vc || 15, "cv-qval")}<small>years</small></div></section>`;
+        }
+        const [letter, name] = m.title.includes(":") ? m.title.split(/\s*:\s*/) : ["", m.title];
+        return this.drop({ key: `bp|${m.title}`, logo: (letter.match(/Section ([A-Z])/i)?.[1] || name[0]).toUpperCase(), logoCls: `cv-t${i % 6}`,
+          title: name.replace(/\s+$/, ""), sub: letter || "", body: () => body(m, m.r + 1, end) });
       });
-      this.sections(host, list);
+      this.page(host, cards.join(""));
     },
   };
 
@@ -557,9 +722,13 @@ const ReviewPage = (() => {
     const f = Review.prepare(data, clean(edits)).current;
     const gain = f.value - f.invested;
     const chip = (label, v, cls = "") => `<div class="xl-kpi ${cls}"><span>${label}</span><b>${v}</b></div>`;
-    el.innerHTML = chip("Current value", fmt.money(f.value)) + chip("Invested", fmt.money(f.invested))
-      + chip("Gain", `${fmt.money(gain)} <small>${fmt.pct(f.invested ? (gain / f.invested) * 100 : null)}</small>`, gain < 0 ? "xl-down" : "xl-up")
-      + chip("Live SIP", fmt.money(f.sip));
+    // XIRR as the review sheet works it out (value-weighted, on DETAILED PORTFOLIO's total row).
+    const xirr = wb && grandRow ? wb.value(DETAILED, grandRow, 11) : null;
+    el.innerHTML = chip("Invested", fmt.money(f.invested), "k-inv") + chip("Current value", fmt.money(f.value), "k-cur")
+      + chip("Gain", fmt.money(gain), gain < 0 ? "xl-down" : "xl-up")
+      + chip("Abs. return", fmt.pct(f.invested ? (gain / f.invested) * 100 : null), "k-ret")
+      + chip("XIRR", typeof xirr === "number" ? fmt.pct(xirr) : "–", "k-xirr")
+      + chip("Live SIP", fmt.money(f.sip), "k-sip");
   }
 
   // ---- Which cells can change -----------------------------------------------------------------
