@@ -201,6 +201,46 @@ try {
   assert.equal((await api("GET", "/dashboard")).body.clients.length, 0);
   assert.ok((await api("GET", "/platforms")).body.length > 0, "platforms kept");
 
+  // Same data Platform Wise and Client Wise: one client, never doubled, PAN joins the two
+  const bulk = (o) => up({ uploadType: "platform", clientName: "", platform: "NJ", originalName: "nj.xlsx", ...o });
+  const rahul = h({ client_name: "RAHUL MISHRA", client_id: "ABCDE1234F", security_name: "Fund R", invested: 1000, current_value: 1500,
+    start_date: "2024-04-01" });
+  const priya = h({ client_name: "Priya Shah", client_id: "PQRSX6789K", security_name: "Fund P", invested: 500, current_value: 400 });
+  const noName = h({ client_id: "LMNOP4321Z", security_name: "Fund U", invested: 100, current_value: 100 });
+  const b1 = await api("POST", "/uploads", bulk({ sha256: "1".repeat(64), rows: [rahul, priya, noName] }));
+  assert.equal(b1.status, 201, JSON.stringify(b1.body));
+  // Client Wise with the same bulk file: only Rahul's row is kept, and it matches, so nothing changes
+  const c1 = await api("POST", "/uploads", up({ clientName: "Rahul Mishra", platform: "NJ", sha256: "2".repeat(64), rows: [rahul, priya, noName] }));
+  assert.equal(c1.status, 201, JSON.stringify(c1.body));
+  assert.equal(c1.body.unchanged, true, "same data is not saved again");
+  // Client Wise with a new value for Rahul: the new value wins, nothing doubles
+  const c2 = await api("POST", "/uploads", up({ clientName: "Rahul Mishra", platform: "NJ", sha256: "3".repeat(64),
+    rows: [{ ...rahul, current_value: 1700 }, priya] }));
+  assert.equal(c2.status, 201, JSON.stringify(c2.body));
+  assert.equal(c2.body.rowsCount, 1, "other clients' rows in the file are left out");
+  let dd = (await api("GET", "/dashboard")).body;
+  const rr = dd.clients.find((x) => /rahul/i.test(x.client_name));
+  assert.equal(rr.holdings, 1);
+  assert.equal(rr.current_value, 1700);
+  assert.equal(dd.clients.filter((x) => /rahul/i.test(x.client_name)).length, 1, "one Rahul, whatever the spelling");
+  // Platform Wise again with the old file: Priya unchanged, Rahul back to 1500
+  const b2 = await api("POST", "/uploads", bulk({ sha256: "4".repeat(64), rows: [rahul, priya, noName] }));
+  assert.equal(b2.status, 201, JSON.stringify(b2.body));
+  assert.ok(b2.body.unchangedClients >= 1, JSON.stringify(b2.body));
+  // A file that names the PAN later claims the Unassigned row
+  const b3 = await api("POST", "/uploads", bulk({ platform: "Anand Rathi", sha256: "5".repeat(64),
+    rows: [h({ client_name: "Kiran Rao", client_id: "LMNOP4321Z", security_name: "Fund K" })] }));
+  assert.equal(b3.status, 201);
+  dd = (await api("GET", "/dashboard")).body;
+  assert.ok(!dd.clients.some((x) => x.client_name === "Unassigned"), "Unassigned row joined Kiran by PAN");
+  const njEx = (await api("GET", "/export?platform=NJ")).body;
+  const exRows = njEx.uploads.flatMap((u) => u.holdings);
+  assert.equal(exRows.filter((x) => x.security_name === "Fund R").length, 1, "export counts each holding once");
+  assert.equal(exRows.find((x) => x.security_name === "Fund R").start_date, "2024-04-01");
+  // A Client Wise file whose clients are all someone else is refused
+  const c3 = await api("POST", "/uploads", up({ clientName: "Nobody Here", platform: "NJ", sha256: "6".repeat(64), rows: [rahul, priya] }));
+  assert.equal(c3.status, 400);
+
   assert.equal((await api("POST", "/logout")).status, 200);
   assert.equal((await api("GET", "/dashboard")).status, 401);
   console.log("All API tests passed.");

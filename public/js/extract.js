@@ -7,7 +7,7 @@
 (function () {
   const AUM_FIELDS = [
     "client_name", "client_id", "asset_class", "category", "security_name", "isin", "identifier", "quantity", "avg_cost",
-    "invested", "current_price", "current_value", "gain_loss", "return_pct", "xirr", "as_of",
+    "invested", "current_price", "current_value", "gain_loss", "return_pct", "xirr", "as_of", "start_date", "end_date",
   ];
 
   const CLIENT_SYNONYMS = {
@@ -53,12 +53,16 @@
       "abs return %", "absolute return %", "net chg %", "% gain", "abs ret %"],
     xirr: ["xirr", "xirr %", "cagr", "cagr %", "annualised return", "annualized return", "irr"],
     as_of: ["as on", "as of", "valuation date", "nav date", "date", "price date"],
+    start_date: ["start date", "investment date", "invested date", "inv date", "date of investment", "purchase date",
+      "buy date", "first purchase date", "first investment date", "allotment date", "open date", "inception date"],
+    end_date: ["end date", "maturity date", "maturity", "redemption date", "close date", "closing date", "expiry date",
+      "lock in date", "lock in end date", "exit date"],
   };
 
   // Columns that look like a known field but mean something else.
   const AUM_IGNORE = new Set(["realised gain", "realized gain", "realised p l", "realized p l", "realised gain loss",
-    "dividend", "dividend amount", "sch wgt %", "weight %", "weightage %", "avg days", "holding days", "start date",
-    "sip date", "purchase date", "buy date", "first purchase date"]);
+    "dividend", "dividend amount", "sch wgt %", "weight %", "weightage %", "avg days", "holding days",
+    "sip date"]);
 
   const AUM_NUMERIC = new Set(["quantity", "avg_cost", "invested", "current_price", "current_value", "gain_loss", "return_pct", "xirr"]);
 
@@ -124,7 +128,7 @@
 
   const PROFILES = {
     aum: {
-      fields: null, synonyms: null, ignore: null, numeric: null, dates: new Set(["as_of"]),
+      fields: null, synonyms: null, ignore: null, numeric: null, dates: new Set(["as_of", "start_date", "end_date"]),
       nameFields: ["security_name", "identifier", "isin"], amountFields: ["quantity", "current_value", "invested", "current_price"],
       requiredAny: ["quantity", "current_value", "invested"], special: true, complete: null,
     },

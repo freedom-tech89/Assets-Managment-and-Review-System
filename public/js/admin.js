@@ -202,6 +202,8 @@ const Admin = (() => {
         fileType: job.file.type || r.info.type, size: job.file.size, sha256: await sha256(r.buffer),
         status: r.status, notes: r.notes.join("; "), rows: r.rows,
       });
+      // Same data as the dashboard already has: nothing was saved.
+      if (created.unchanged) return { job, skipped: true, unchanged: true, error: created.message };
       try {
         await api("PUT", `/uploads/${created.id}/file`, new Blob([r.buffer]), true);
       } catch (e) {
@@ -222,7 +224,7 @@ const Admin = (() => {
     $("resultTitle").textContent = ok.length ? (bad.length ? "Uploaded with some problems" : "Uploaded successfully") : "Nothing was uploaded";
     el.resultSub.textContent = [
       ok.length ? `${ok.length} file${ok.length === 1 ? "" : "s"} saved` : "",
-      skipped.length ? `${skipped.length} already uploaded` : "",
+      skipped.length ? `${skipped.length} unchanged or already uploaded` : "",
       bad.length ? `${bad.length} failed` : "",
       lastBatch.uploadType === "client" ? `for ${lastBatch.clientName}` : "(Platform Wise)",
     ].filter(Boolean).join(" · ");
@@ -233,9 +235,10 @@ const Admin = (() => {
         const head = c.isNew ? `<span class="badge ok">Added</span>` : `<span class="badge info">Version ${c.version}</span>`;
         const detail = c.isNew ? `New data, as of ${fmt.date(c.snapshotDate)}` : `Added as version ${c.version} for ${fmt.date(c.snapshotDate)}; earlier versions kept`;
         const warn = c.rowsCount ? "" : `<span class="note">No ${what} could be read from this file.</span>`;
-        res = `${head} <span class="small">${esc(detail)} · ${c.rowsCount} ${what}${uploadType === "platform" ? `, ${c.clientsCount} clients` : ""}</span>${warn}`;
+        const same = c.unchangedClients ? `; ${c.unchangedClients} client${c.unchangedClients === 1 ? "" : "s"} unchanged, kept as before` : "";
+        res = `${head} <span class="small">${esc(detail)} · ${c.rowsCount} ${what}${uploadType === "platform" ? `, ${c.clientsCount} clients` : ""}${same}</span>${warn}`;
       } else if (r.skipped) {
-        res = `<span class="badge muted">Skipped</span> <span class="small">${esc(r.error)}</span>`;
+        res = `<span class="badge muted">${r.unchanged ? "No change" : "Skipped"}</span> <span class="small">${esc(r.error)}</span>`;
       } else {
         res = `<span class="badge err">Failed</span> <span class="small">${esc(r.error)}</span>`;
       }

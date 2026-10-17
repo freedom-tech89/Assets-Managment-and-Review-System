@@ -44,7 +44,7 @@
   function totals(items) {
     const inv = items.reduce((s, h) => s + (h.invested || 0), 0);
     const cur = items.reduce((s, h) => s + (h.current_value || 0), 0);
-    const gain = items.reduce((s, h) => s + (h.gain_loss || 0), 0);
+    const gain = items.reduce((s, h) => s + (h.gain_loss ?? ((h.current_value || 0) - (h.invested || 0))), 0);
     const r2 = (n) => Math.round(n * 100) / 100;
     return { inv: r2(inv), cur: r2(cur), gain: r2(gain), ret: inv ? gain / inv : null };
   }
@@ -150,28 +150,19 @@
   const KIND = { aum: "AUM", sip: "SIP" };
 
   const col = (header, key, fmt, width) => [header, key, fmt, width];
-  function holdingColumns(multi) {
+  // The data sheet: one row per holding, in the columns the admin asked for.
+  function holdingColumns() {
     return [
       col("S.No", null, "0", 6),
-      ...(multi ? [col("Client Name", "client_name", null, 24), col("Client ID / PAN", "client_id", null, 15)] : []),
-      col("Category", "product", null, 10),
-      col("Platform", "platform", null, 18),
-      col("Asset Class", "asset_class", null, 14),
-      col("Type (as reported)", "category", null, 16),
-      col("Security Name", "security_name", null, 42),
-      col("ISIN", "isin", null, 15),
-      col("Symbol / Folio", "identifier", null, 15),
-      col("Quantity", "quantity", QTY, 12),
-      col("Avg Cost", "avg_cost", MONEY, 12),
-      col("Invested Amount", "invested", MONEY, 16),
-      col("Current Price", "current_price", MONEY, 13),
+      col("Category", "category_out", null, 18),
+      col("Scheme", "security_name", null, 44),
+      col("Client Name", "client_name", null, 26),
+      col("PAN", "pan", null, 13),
+      col("Invested Value", "invested", MONEY, 16),
       col("Current Value", "current_value", MONEY, 16),
-      col("Gain / Loss", "gain_loss", MONEY, 15),
+      col("Invested Date", "start_date", null, 13),
+      col("End Date", "end_date", null, 12),
       col("Return %", "return_pct", PCT, 10),
-      col("XIRR %", "xirr", PCT, 9),
-      col(multi ? "Weight in Client %" : "Weight %", "weight", PCT, 11),
-      col("As of Date", "as_of", null, 12),
-      col("Source File", "source_file", null, 30),
     ];
   }
 
@@ -245,6 +236,23 @@
     });
     const order = (a, b) => (multiClient ? byText("client_name")(a, b) : 0) || PRODUCT_ORDER(a, b) || byText("platform")(a, b)
       || byText("asset_class")(a, b) || byText("security_name")(a, b);
+    // PAN, dates and return for the data sheet. A holding without its own dates takes them from
+    // the SIP in the same scheme.
+    const PAN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+    const panOf = (v) => { const x = String(v || "").replace(/\s+/g, "").toUpperCase(); return PAN.test(x) ? x : null; };
+    const pans = new Map();
+    [...all, ...sips].forEach((x) => { const p = panOf(x.client_id); if (p && !pans.has(x.client_name)) pans.set(x.client_name, p); });
+    const schemeKey = (x) => `${x.client_name}|${x.isin || x.identifier || (x.security_name || "").toLowerCase()}`;
+    const sipOf = new Map();
+    sips.forEach((x) => { const k = schemeKey(x); if (!sipOf.has(k) || (x.start_date && x.start_date < (sipOf.get(k).start_date || "9999"))) sipOf.set(k, x); });
+    all.forEach((h) => {
+      h.pan = panOf(h.client_id) || pans.get(h.client_name) || "";
+      h.category_out = h.category || h.asset_class || h.product;
+      const sip = sipOf.get(schemeKey(h));
+      h.start_date = h.start_date || sip?.start_date || null;
+      h.end_date = h.end_date || sip?.end_date || null;
+      if ((h.return_pct === null || h.return_pct === undefined) && h.invested) h.return_pct = (((h.current_value || 0) - h.invested) / h.invested) * 100;
+    });
     const holdings = all.filter((h) => h.product !== LOANS).sort(order);
     const loans = all.filter((h) => h.product === LOANS).sort(order);
     sips.sort((a, b) => Number(b.live !== false) - Number(a.live !== false) || order(a, b));
@@ -287,13 +295,13 @@
     }
 
     if (multiClient) clientSummarySheet(wb, clients, groupBy(sips, "client_name"), cats.filter((c) => c !== LOANS), t);
-    const columns = holdingColumns(multiClient);
+    const columns = holdingColumns();
     const nameCol = columns.findIndex((c) => c[1] === "security_name") + 1;
-    holdingsSheet(wb, columns, holdings, t, multiClient ? 3 : 2, nameCol, !multiClient);
+    holdingsSheet(wb, columns, holdings, t, 3, nameCol, !multiClient);
     if (loans.length) {
       const lt = totals(loans);
       loans.forEach((h) => { h.weight = null; });
-      holdingsSheet(wb, columns, loans, lt, multiClient ? 3 : 2, nameCol, false, "Loans (LAS)");
+      holdingsSheet(wb, columns, loans, lt, 3, nameCol, false, "Loans (LAS)");
     }
     if (sips.length) sipSheet(wb, sips, multiClient);
     sourceSheet(wb, ["File Name", "File", "Category", "Platform", "Upload Type", "Version", "Data as of", "Uploaded At", "Rows Read", "Status", "Notes"],
