@@ -81,7 +81,7 @@
       "sip instalment", "monthly sip", "sip value", "sip amt", "installment amt", "investment amount", "sip"],
     frequency: ["frequency", "sip frequency", "freq", "periodicity", "installment frequency"],
     sip_day: ["sip date", "sip day", "installment day", "instalment day", "debit date", "deduction date",
-      "sip debit day", "installment date", "debit day"],
+      "sip debit day", "installment date", "debit day", "ecs date", "ecs day"],
     start_date: ["start date", "sip start date", "from date", "registration date", "reg date", "start", "sip start"],
     end_date: ["end date", "sip end date", "to date", "end", "expiry date", "sip end", "cease date"],
     status: ["status", "sip status", "state", "registration status"],
@@ -236,7 +236,8 @@
   }
 
   // Return {index, mapping: {col: field}} for the most convincing header row, or null.
-  function findHeader(rows, maxScan = 40) {
+  function findHeader(rows, maxScan = P.special ? 40 : 400) {
+    // Holdings headers sit near the top; a statement's SIP table can come after its holdings.
     let best = null;
     rows.slice(0, maxScan).forEach((row, idx) => {
       const mapping = {}, used = new Set();
@@ -376,6 +377,8 @@
     const wb = XLSX.read(buffer, { type: "array", cellDates: true });
     const tables = [], headerText = [], notes = [];
     for (const name of wb.SheetNames) {
+      // A sheet of transactions repeats each scheme above its purchases; it is not holdings.
+      if (/transaction|txn/i.test(name)) continue;
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: true });
       tables.push(rows);
       rows.slice(0, 15).forEach((r) => headerText.push(r.filter((c) => !blank(c)).join(" ")));

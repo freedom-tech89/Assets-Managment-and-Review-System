@@ -173,6 +173,13 @@ const Admin = (() => {
     }).filter((j) => j.platform)
       .sort((a, b) => platforms.indexOf(a.platform) - platforms.indexOf(b.platform) || a.kind.localeCompare(b.kind));
     if (!jobs.length) return;
+    // A portfolio statement often carries a SIP summary too: read it from the AUM file when no
+    // SIP file was chosen for that platform.
+    for (const j of [...jobs]) {
+      if (j.kind === "aum" && !jobs.some((x) => x.kind === "sip" && x.platform === j.platform)) {
+        jobs.splice(jobs.indexOf(j) + 1, 0, { ...j, key: `${j.platform.id}:sip:auto`, kind: "sip", auto: true });
+      }
+    }
 
     busy = true;
     updateCount();
@@ -186,6 +193,7 @@ const Admin = (() => {
     busy = false;
     el.clearAll.disabled = false;
     results.filter((r) => r.ok || r.skipped).forEach((r) => picked.delete(r.job.key));
+    for (let i = results.length - 1; i >= 0; i--) if (results[i].none) results.splice(i, 1);
     lastBatch = { id: batchId, clientName, uploadType, saved: results.filter((r) => r.ok).length };
     el.pdfPassword.value = "";
     setMsg(el.msg, "");
@@ -196,6 +204,7 @@ const Admin = (() => {
   async function uploadOne(job, { batchId, clientName }) {
     try {
       const r = await readFile(job.file, job.kind, el.pdfPassword.value);
+      if (job.auto && !r.rows.length) return { job, none: true };
       const created = await api("POST", "/uploads", {
         uploadType, clientName, platform: job.platform.name, product: job.platform.product, kind: job.kind, batchId,
         snapshotDate: el.snap.value || null, originalName: job.file.name, format: r.info.format,
@@ -243,7 +252,7 @@ const Admin = (() => {
         res = `<span class="badge err">Failed</span> <span class="small">${esc(r.error)}</span>`;
       }
       return `<tr><td>${esc(r.job.platform.name)}</td><td>${esc(r.job.platform.product)}</td>
-        <td>${KIND_LABEL[r.job.kind]}: ${esc(r.job.file.name)}</td><td>${res}</td></tr>`;
+        <td>${KIND_LABEL[r.job.kind]}${r.job.auto ? " (read from the AUM file)" : ""}: ${esc(r.job.file.name)}</td><td>${res}</td></tr>`;
     }).join("");
     $("resultReportBtn").disabled = !ok.some((r) => r.created.rowsCount);
     setMsg(el.resultMsg, "");
