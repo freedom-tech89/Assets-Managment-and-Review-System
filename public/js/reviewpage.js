@@ -595,9 +595,8 @@ const ReviewPage = (() => {
       const colOf = (g, re) => [...g.cols].reverse().find((c) => re.test(head(c)));
       const latest = dates[dates.length - 1];
       const grandG = groups.find((g) => /GRAND TOTAL/i.test(g.title));
-      const firmG = groups.find((g) => /TOTAL PORTFOLIO/i.test(g.title) && g !== grandG);
       const inv = grandG && colOf(grandG, /INVESTED/i), wealth = grandG && colOf(grandG, /WEALTH|VALUE/i), gain = grandG && colOf(grandG, /GAIN/i);
-      const sipC = firmG && colOf(firmG, /SIP/i);
+      const sipC = this.range(1, sh.maxCol).find((c) => /Monthly Avg Financial Savings|^TOTAL LIVE SIP$/i.test(head(c)));
       const hist = dates.length ? `<section class="cv-block cv-years"><header class="cv-head"><div class="cv-logo cv-t0">₹</div><div class="cv-title"><h3>Review history</h3><span>${dates.length} review date${dates.length === 1 ? "" : "s"}</span></div></header>
         <div class="cv-yeargrid">${dates.map((r, i) => {
           const v = wealth ? this.n(r, wealth) : null, p = i && wealth ? this.n(dates[i - 1], wealth) : null;

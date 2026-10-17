@@ -894,10 +894,13 @@ const SheetView = (() => {
     for (const d of wb.drawings[name] || []) if (d.to) { maxR = Math.max(maxR, d.to.r + 1); maxC = Math.max(maxC, d.to.c + 1); }
     maxR = Math.min(maxR + 3, MAX_ROWS);
     maxC = Math.min(maxC + 2, MAX_COLS);
+    // Hidden columns are shown (opts.showHidden) only when something is in them.
+    const used = new Set();
+    for (const x of sh.cells.values()) if ((x.v !== null && x.v !== undefined && x.v !== "") || x.f) used.add(x.c);
     const cols = [], colX = [0];
     for (let c = 1; c <= maxC; c++) {
       const info = sh.cols.get(c);
-      const w = (info?.hidden && !opts.showHidden) || (opts.cols && !opts.cols.has(c)) ? 0 : Math.max(colPx(info?.w || sh.defaultW), opts.colW?.[c] || 0);
+      const w = (info?.hidden && (!opts.showHidden || !used.has(c))) || (opts.cols && !opts.cols.has(c)) ? 0 : Math.max(colPx(info?.w || sh.defaultW), opts.colW?.[c] || 0);
       if (w) cols.push({ c, w });
       colX[c] = colX[c - 1] + w;
     }

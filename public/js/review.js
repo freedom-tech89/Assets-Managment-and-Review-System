@@ -338,6 +338,11 @@ const Review = (() => {
     sh.set("M1", "FINOWISE");
     sh.set("U2", "FINOWISE LIVE SIP");
     sh.set("V2", "TOTAL FINOWISE MF PORTFOLIO VALUE");
+    // "FINOWISE TOTAL PORTFOLIO" (AQ:AR) only repeated the grand total's wealth and SIP (BN, BL),
+    // so it is left out.
+    sh.clearArea("AQ", "AR", 1, 2);
+    sh.tail = sh.tail.replace(/<mergeCell ref="AQ1:AR1"\/>/, "");
+    sh.tail = sh.tail.replace(/<mergeCells count="\d+"/, `<mergeCells count="${(sh.tail.match(/<mergeCell ref=/g) || []).length}"`);
     const mfCols = (f, which, cols) => {
       const p = [...f.mf.entries()].filter(([n]) => is(n, which)).map(([, v]) => v);
       const g = (field, t) => p.reduce((a, x) => a + x[field][t], 0);
@@ -359,7 +364,7 @@ const Review = (() => {
         ["AA", ar.reduce((a, x) => a + x.sipTotal, 0)], ["AB", ar.reduce((a, x) => a + x.total, 0)],
         ["AC", f.shares.motilal], ["AD", f.shares.omni], ["AE", f.shares.piper], ["AF", f.shares.total],
         ...mfCols(f, "freedom", span("AG", 10)),
-        ["AQ", f.sip], ["AR", f.value], ["BL", f.sip], ["BM", f.invested], ["BN", f.value],
+        ["BL", f.sip], ["BM", f.invested], ["BN", f.value],
       ];
       for (const [c, v] of cells) sh.set(`${c}${r}`, v || null, { s: st.n });
       sh.set(`BO${r}`, { f: `BN${r}-BM${r}` }, { s: st.n });
