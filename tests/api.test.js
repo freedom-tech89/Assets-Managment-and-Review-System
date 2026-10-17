@@ -263,6 +263,24 @@ try {
   assert.equal(other.status, 201);
   assert.ok((await api("GET", "/dashboard")).body.clients.some((x) => x.client_name === "Sunil Rao (OTHER9876Q)"), "name + PAN is the client");
 
+  // Investor-wise AUM report (one total per investor) Platform Wise, then the investor's
+  // scheme-wise statement Client Wise: the detail replaces the total, never adds to it
+  const total = (name, pan, inv, cur) => h({ client_name: name, client_id: pan, security_name: "All schemes (investor total)",
+    level: "summary", invested: inv, current_value: cur, quantity: null, asset_class: null });
+  const aum = await api("POST", "/uploads", bulk({ platform: "Freedomlifex", sha256: "10".repeat(32), rows: [
+    total("MEENA IYER", "MEENA1234M", 1000, 1500), total("Ravi Nair", "RAVIN5678R", 500, 600)] }));
+  assert.equal(aum.status, 201, JSON.stringify(aum.body));
+  let mi = (await api("GET", "/dashboard/client?name=Meena Iyer")).body;
+  assert.equal(mi.total.current_value, 1500, "the investor total stands in until there is detail");
+  const st = await api("POST", "/uploads", up({ clientName: "Meena Iyer", platform: "Freedomlifex", sha256: "11".repeat(32), rows: [
+    h({ client_name: "MEENA IYER", client_id: "MEENA1234M", identifier: "M-1", security_name: "One Fund", current_value: 900 }),
+    h({ client_name: "MEENA IYER", client_id: "MEENA1234M", identifier: "M-2", security_name: "Two Fund", current_value: 650 })] }));
+  assert.equal(st.status, 201, JSON.stringify(st.body));
+  mi = (await api("GET", "/dashboard/client?name=Meena Iyer")).body;
+  assert.equal(mi.total.current_value, 1550, "scheme detail replaces the investor total");
+  assert.equal(mi.holdings.length, 2);
+  assert.equal((await api("GET", "/dashboard/client?name=Ravi Nair")).body.total.current_value, 600, "other investors keep their totals");
+
   assert.equal((await api("POST", "/logout")).status, 200);
   assert.equal((await api("GET", "/dashboard")).status, 401);
   console.log("All API tests passed.");

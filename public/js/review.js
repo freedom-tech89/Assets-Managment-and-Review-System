@@ -208,7 +208,17 @@ const Review = (() => {
       const k = folioKey(r);
       if (!best.has(k) || rank(r.upload_id) > rank(best.get(k))) best.set(k, r.upload_id);
     }
-    return rows.filter((r) => best.get(folioKey(r)) === r.upload_id);
+    const kept = rows.filter((r) => r.level !== "summary" && best.get(folioKey(r)) === r.upload_id);
+    // An investor total stands in only where there is no scheme-wise detail for that platform.
+    const detailed = new Set(kept.map((r) => `${r.platform_key}|${r.product}`));
+    const totals = new Map();
+    for (const r of rows) {
+      const u = up.get(r.upload_id);
+      if (r.level !== "summary" || !u || (date && u.snapshot_date > date) || detailed.has(`${r.platform_key}|${r.product}`)) continue;
+      const k = `${r.platform_key}|${r.product}`;
+      if (!totals.has(k) || rank(r.upload_id) > rank(totals.get(k))) totals.set(k, r.upload_id);
+    }
+    return kept.concat(rows.filter((r) => r.level === "summary" && totals.get(`${r.platform_key}|${r.product}`) === r.upload_id));
   }
 
   const PLATFORM = {

@@ -7,7 +7,7 @@
 (function () {
   const AUM_FIELDS = [
     "client_name", "client_id", "asset_class", "category", "security_name", "isin", "identifier", "quantity", "avg_cost",
-    "invested", "current_price", "current_value", "gain_loss", "return_pct", "xirr", "as_of", "start_date", "end_date",
+    "invested", "current_price", "current_value", "gain_loss", "return_pct", "xirr", "as_of", "start_date", "end_date", "level",
   ];
 
   const CLIENT_SYNONYMS = {
@@ -36,7 +36,7 @@
     quantity: ["quantity", "qty", "units", "balance units", "no of shares", "shares", "holding qty",
       "available qty", "closing units", "unit balance", "quantity available"],
     avg_cost: ["avg cost", "average cost", "avg price", "average price", "buy price", "purchase price",
-      "cost price", "avg nav", "purchase nav", "avg buy price", "average buy price", "avg cost price"],
+      "cost price", "avg nav", "average nav", "purchase nav", "avg buy price", "average buy price", "avg cost price"],
     invested: ["invested amount", "invested value", "invested", "investment amount", "investment value",
       "amount invested", "cost value", "total cost", "purchase value", "buy value", "book value",
       "cost of acquisition", "cost", "inv cost", "investment cost", "purchase cost"],
@@ -144,6 +144,11 @@
   // Bulk files often name the client in a heading line above each client's holdings,
   // e.g. "Investor: Ravi Kumar   PAN: ABCDE1234F".
   const CLIENT_HEADING = /^(?:client|investor|customer|account\s+holder|holder)(?:\s*name)?\s*[:\-–]\s*(.+?)(?:\s+(?:pan|client\s*(?:id|code)|ucc)(?:\s*no)?\s*[:\-–]\s*([A-Z0-9]+))?\s*$/i;
+  // A statement that heads the page with the investor and PAN, e.g. "NAME: RAVI KUMAR (ABCDE1234F)".
+  const NAME_PAN = /^(?:(?:client|investor|customer)?\s*name\s*[:\-–]\s*)?([A-Za-z][A-Za-z .'&-]{1,80}?)\s*\(\s*([A-Z]{5}[0-9]{4}[A-Z])\s*\)\s*$/;
+  // Section titles after the holdings table: what follows is not current holdings.
+  const SECTION_END = /\b(transactions?|txn|trxn|realised|realized|redeemed|redemptions?|past|closed|sold|switch(es)?|capital gains?|dividend history|stp|swp|cash ?flows?|sip details|sip summary|systematic)\b/i;
+  const TXN_HEADER = /\b(transaction|txn|trxn|tran(s)? type|purchase type|redemption|switch in|switch out)\b/;
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   function norm(text) {
@@ -158,7 +163,7 @@
     if (!h || h.length > 60 || P.ignore.has(h)) return null;
     if (P.special) {
       if (/\b(xirr|cagr)\b/.test(h)) return "xirr";
-      if (h.includes("%") && /gain|return|ret|p l|pnl|chg|change/.test(h) && !/annuali[sz]ed/.test(h)) return "return_pct";
+      if (h.includes("%") && /gain|return|ret|rtn|p l|pnl|chg|change/.test(h) && !/annuali[sz]ed/.test(h)) return "return_pct";
     }
     let best = null, bestScore = 0;
     for (const [field, syns] of Object.entries(P.synonyms)) {
@@ -180,6 +185,8 @@
     let s = String(value).trim();
     if (!s || ["-", "--", "—", "NA", "N/A", "nil"].includes(s)) return null;
     const negative = (s.startsWith("(") && s.endsWith(")")) || (s.endsWith("-") && s.length > 1);
+    // "17.85 (16-10-2026)": a value with its date beside it.
+    s = s.replace(/\(\s*\d{1,2}[-/.][A-Za-z0-9]{1,9}[-/.]\d{2,4}\s*\)/g, " ").trim();
     s = s.replace(/\b(rs|inr|usd|cr|dr)\b\.?/gi, "").replace(/−/g, "-").replace(/[^\d.\-eE]/g, "");
     if (!s || s === "-" || s === ".") return null;
     const num = Number(s);
@@ -252,8 +259,8 @@
 
   // Look for a client heading in a row; updates ctx and returns true if the row is one.
   function readHeading(row, ctx) {
-    const text = row.filter((c) => !blank(c)).map((c) => String(c).trim()).join(" ");
-    const m = CLIENT_HEADING.exec(text);
+    const cells = row.filter((c) => !blank(c)).map((c) => String(c).trim());
+    const m = CLIENT_HEADING.exec(cells.join(" ")) || (cells.length && NAME_PAN.exec(cells[0].split(/\n/)[0].trim()));
     if (!m) return false;
     ctx.client = m[1].trim();
     ctx.clientId = m[2] || null;
@@ -271,6 +278,18 @@
       // between one client's block and the next.
       if (row.every(blank)) continue;
       if (readHeading(row, ctx)) continue;
+      const texts = row.filter((c) => !blank(c));
+      // A section title ("Transaction Details", "Redeemed Schemes", ...) ends the holdings.
+      if (texts.length <= 2 && texts.every((c) => typeof c === "string" && parseNumber(c) === null) && SECTION_END.test(texts.join(" "))) break;
+      // Another header row: a table of transactions ends the holdings; anything else starts a
+      // new table with its own columns.
+      const fieldCells = row.filter((c) => typeof c === "string" && matchField(c)).length;
+      if (fieldCells >= 3 && !row.some((c) => !blank(c) && !(c instanceof Date) && parseNumber(c) !== null)) {
+        if (row.some((c) => typeof c === "string" && TXN_HEADER.test(norm(c)))) break;
+        const next = findHeader([row]);
+        if (next) { mapping = summaryMapping(row, next.mapping); continue; }
+        break;
+      }
       const rec = Object.fromEntries(P.fields.map((f) => [f, null]));
       for (const [col, field] of Object.entries(mapping)) {
         const val = row[col];
@@ -279,6 +298,7 @@
         else if (P.dates.has(field) || (field === "sip_day" && val instanceof Date)) rec[field] = parseDate(val);
         else rec[field] = String(val).split(/\s+/).filter(Boolean).join(" ");
       }
+      if (mapping.summary) { rec.level = "summary"; rec.security_name = SUMMARY_LABEL; }
       const label = rec.security_name || rec.identifier || rec.isin || "";
       if (!label || TOTAL_ROW.test(label) || P.synonyms.security_name.includes(norm(label))) continue;
       if (!P.requiredAny.some((f) => rec[f] !== null)) continue;
@@ -289,6 +309,23 @@
       holdings.push(P.complete(rec));
     }
     return holdings;
+  }
+
+  // An investor-wise AUM report has one row per investor (Name, PAN, Inv. Cost, Current Value)
+  // and no schemes: its "Name" column is the investor, and each row is that investor's total.
+  const SUMMARY_LABEL = "All schemes (investor total)";
+  function summaryMapping(row, mapping) {
+    if (P !== PROFILES.aum) return mapping;
+    const fields = Object.values(mapping);
+    const nameCol = Object.keys(mapping).find((c) => mapping[c] === "security_name");
+    const head = nameCol !== undefined ? norm(row[nameCol]) : "";
+    const investorWise = nameCol !== undefined && fields.includes("client_id") && !fields.includes("client_name")
+      && /^(name|investor|investor name|client|client name|customer name)$/.test(head)
+      && !["isin", "identifier", "quantity"].some((f) => fields.includes(f));
+    if (!investorWise) return mapping;
+    const m = { ...mapping, [nameCol]: "client_name" };
+    Object.defineProperty(m, "summary", { value: true });
+    return m;
   }
 
   // Fill fields that can be derived from the others.
@@ -312,13 +349,11 @@
     for (const rows of tables) {
       if (!rows.length) continue;
       const found = findHeader(rows);
-      if (found) {
-        last = found.mapping;
-        scanHeadings(rows.slice(0, found.index), ctx);
-        holdings = holdings.concat(rowsToHoldings(rows, last, found.index + 1, ctx));
-      } else if (last) {
-        holdings = holdings.concat(rowsToHoldings(rows, last, 0, ctx));
-      }
+      // A sheet without a header of its own (a classification sheet, a summary) is not holdings.
+      if (!found) continue;
+      last = summaryMapping(rows[found.index], found.mapping);
+      scanHeadings(rows.slice(0, found.index), ctx);
+      holdings = holdings.concat(rowsToHoldings(rows, last, found.index + 1, ctx));
     }
     return holdings;
   }
