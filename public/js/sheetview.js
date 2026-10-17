@@ -880,7 +880,8 @@ const SheetView = (() => {
   }
 
   // Lays out a sheet: visible columns and rows with their pixel sizes, and how far the sheet goes.
-  // opts.showHidden: show columns and rows the sheet hides; opts.hideRows: rows to leave out.
+  // opts.showHidden: show columns and rows the sheet hides; opts.hideRows: rows to leave out;
+  // opts.rows / opts.cols: Sets of the only rows / columns to show; opts.colW: {column: min px}.
   function layout(wb, name, opts = {}) {
     const sh = wb.sheet(name);
     let maxR = sh.maxRow, maxC = sh.maxCol;
@@ -896,14 +897,14 @@ const SheetView = (() => {
     const cols = [], colX = [0];
     for (let c = 1; c <= maxC; c++) {
       const info = sh.cols.get(c);
-      const w = info?.hidden && !opts.showHidden ? 0 : colPx(info?.w || sh.defaultW);
+      const w = (info?.hidden && !opts.showHidden) || (opts.cols && !opts.cols.has(c)) ? 0 : Math.max(colPx(info?.w || sh.defaultW), opts.colW?.[c] || 0);
       if (w) cols.push({ c, w });
       colX[c] = colX[c - 1] + w;
     }
     const rows = [], rowY = [0];
     for (let r = 1; r <= maxR; r++) {
       const info = sh.rows.get(r);
-      const h = (info?.hidden && !opts.showHidden) || opts.hideRows?.has(r) ? 0 : rowPx(info?.ht || sh.defaultH);
+      const h = (info?.hidden && !opts.showHidden) || opts.hideRows?.has(r) || (opts.rows && !opts.rows.has(r)) ? 0 : rowPx(info?.ht || sh.defaultH);
       if (h) rows.push({ r, h });
       rowY[r] = rowY[r - 1] + h;
     }
@@ -911,7 +912,8 @@ const SheetView = (() => {
   }
 
   // HTML for one sheet. opts: {zoom, showHidden, hideRows, isEdited(r, c), isEditable(r, c),
-  // decorate(r, c) -> {cls, before} to add a class and HTML before a cell's text}.
+  // decorate(r, c) -> {cls, before} to add a class and HTML before a cell's text, text(r, c) -> text
+  // to show instead of the cell's, rows, cols, colW (see layout)}.
   function render(wb, name, host, opts = {}) {
     const L = layout(wb, name, opts);
     const modern = !!opts.modern;
@@ -953,7 +955,8 @@ const SheetView = (() => {
         }
         const st = wb.xf(sh, r, c);
         const v = wb.value(name, r, c);
-        const fmt = format(v, st.fmt);
+        const over = opts.text ? opts.text(r, c) : undefined;
+        const fmt = over !== undefined ? { text: over } : format(v, st.fmt);
         const fill = st.fill;
         const right = bcss(edge(r, c2, "right"), true) || grid(fill, fillAt(r, c2 + 1));
         const bottom = bcss(edge(r2, c, "bottom")) || grid(fill, fillAt(r2 + 1, c));
@@ -994,6 +997,7 @@ const SheetView = (() => {
     const at = (p) => ({ x: HW + L.colX[Math.min(p.c, L.maxC)] + (colGone(p.c + 1) ? 0 : p.co), y: HH + L.rowY[Math.min(p.r, L.maxR)] + (rowGone(p.r + 1) ? 0 : p.ro) });
     let draw = "";
     for (const d of wb.drawings[name] || []) {
+      if (opts.rows && (d.abs || !opts.rows.has(d.from.r + 1))) continue;
       let x, y, w, hh;
       if (d.abs) { x = HW + d.abs.x; y = HH + d.abs.y; w = d.w; hh = d.h; }
       else {
@@ -1043,12 +1047,12 @@ const SheetView = (() => {
     return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
   }
 
-  function chartSvg(wb, doc, W, H) {
+  function chartSvg(wb, doc, W, H, light = false) {
     const space = doc.documentElement;
     const chart = kid(space, "chart");
     const plot = kid(chart, "plotArea");
     const bar = deep(plot, "barChart")[0];
-    const bg = fillOf(wb, kid(space, "spPr")) || "#FFFFFF";
+    const bg = light ? "#FFFFFF" : fillOf(wb, kid(space, "spPr")) || "#FFFFFF";
     const dark = (() => { const m = /^#(..)(..)(..)$/.exec(bg || ""); if (!m) return false; const [r, g, b] = m.slice(1).map((x) => parseInt(x, 16)); return 0.299 * r + 0.587 * g + 0.114 * b < 128; })();
     const ink = dark ? "#D9D9D9" : "#595959";
     const title = deep(kid(chart, "title"), "t").map((t) => t.textContent).join("");
@@ -1059,7 +1063,7 @@ const SheetView = (() => {
     };
     const series = bar ? kids(bar, "ser").map((s, i) => ({
       name: deep(kid(s, "tx"), "v")[0]?.textContent || "", cats: refVals(kid(s, "cat")), vals: refVals(kid(s, "val")).map((v) => (typeof v === "number" ? v : 0)),
-      color: fillOf(wb, kid(s, "spPr")) || `#${wb.scheme?.[`accent${(i % 6) + 1}`] || "4472C4"}`,
+      color: ((c) => (light && c && /^#([0-9A-F]{2})\1\1$/i.test(c) ? "#0f766e" : c))(fillOf(wb, kid(s, "spPr"))) || `#${wb.scheme?.[`accent${(i % 6) + 1}`] || "4472C4"}`,
     })) : [];
     const valAx = deep(plot, "valAx")[0];
     const axFmt = attr(kid(valAx, "numFmt"), "formatCode") || "General";
@@ -1071,7 +1075,7 @@ const SheetView = (() => {
     const padL = Math.min(90, 14 + 7 * Math.max(...[0, top].map((v) => label(v).length))), padT = title ? 34 : 12, padB = 26, padR = 12;
     const pw = Math.max(10, W - padL - padR), ph = Math.max(10, H - padT - padB);
     const bw = (pw / n) * 0.62 / Math.max(series.length, 1);
-    let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" font-family="Calibri,Arial,sans-serif">`;
+    let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg" font-family="${light ? MODERN_FONT.replace(/"/g, "'") : "Calibri,Arial,sans-serif"}">`;
     svg += `<rect width="${W}" height="${H}" fill="${bg === "none" ? "transparent" : bg}"/>`;
     if (title) svg += `<text x="${W / 2}" y="22" text-anchor="middle" font-size="15" font-weight="700" fill="${ink}">${esc(title)}</text>`;
     for (let v = 0; v <= top + 1e-9; v += step) {
@@ -1093,6 +1097,6 @@ const SheetView = (() => {
     return svg + "</svg>";
   }
 
-  return { load: (zip) => Workbook.load(zip), render, format, parse, colName, colNum, refOf, parseRef, toSerial, fromSerial, HEAD_W, HEAD_H };
+  return { load: (zip) => Workbook.load(zip), render, chart: chartSvg, format, parse, colName, colNum, refOf, parseRef, toSerial, fromSerial, HEAD_W, HEAD_H };
 })();
 globalThis.SheetView = SheetView;

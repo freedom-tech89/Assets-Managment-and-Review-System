@@ -97,6 +97,7 @@ const ReviewPage = (() => {
     names = new Map([...prep.raw.holdings, ...prep.raw.sips].map((r) => [Review.rowKey(r), r.security_name || "Scheme"]));
     foldsSet = false;
     openGroups = new Set();
+    shownEmpty = new Set();
     shell();
     active = true;
     await rebuild();
@@ -231,6 +232,7 @@ const ReviewPage = (() => {
     const hideRows = new Set();
     if (detailed) for (const g of groups) if (!openGroups.has(g.id)) for (let r = g.first; r <= g.last; r++) hideRows.add(r);
     if (detailed && !excelView) Cards.render(host);
+    else if (!excelView && Pages[sheetName]) Pages[sheetName](host);
     else SheetView.render(wb, sheetName, host, { zoom, modern: !excelView, isEdited, isEditable, hideRows, showHidden: SHOW_HIDDEN.has(sheetName), decorate: detailed ? decorate : null });
     $("xlFolds").hidden = !detailed || !groups.length;
     host.scrollLeft = scroll.x;
@@ -401,6 +403,150 @@ const ReviewPage = (() => {
       host.innerHTML = `<div class="cv" style="zoom:${zoom}">${mix}${types.map((t, i) => this.type(t, i)).join("")
         || '<div class="card empty-state"><h2>No holdings</h2><p>Upload this client\'s portfolio to see it here.</p></div>'}${blocks.filter((b) => b.loans).map((b) => this.loans(b)).join("")}${total}</div>`;
       host.scrollTop = scroll;
+    },
+  };
+
+  // The other sheets in the dashboard look, as cards. Sections of a sheet are drawn by
+  // SheetView with only their rows and columns, so cells stay clickable and editable as in the
+  // Excel view; Cover and Summary are built from their cells.
+  let shownEmpty = new Set(); // Portfolio Journey platforms with no values, opened to type in
+  const Pages = {
+    v: (r, c) => wb.value(sheetName, r, c),
+    t(r, c) {
+      const v = this.v(r, c);
+      if (v === null || v === undefined || v === "") return "";
+      const f = SheetView.format(v, wb.xf(wb.sheet(sheetName), r, c).fmt);
+      return `${f.left ?? ""}${f.text}`.trim();
+    },
+    n(r, c) { const v = this.v(r, c); return typeof v === "number" ? v : null; },
+    range: (a, b) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i),
+    // A cell's value that types into the cell when clicked.
+    val(r, c, cls = "") {
+      const e = isEditable(r, c);
+      return `<b class="${cls} ${e ? "cv-edit" : ""} ${isEdited(r, c) ? "xl-edited" : ""}" data-r="${r}" data-c="${c}"${e ? ' title="Click to change"' : ""}>${esc(this.t(r, c)) || "–"}</b>`;
+    },
+    // Cards of sheet rows: [{title, sub, rows: [], cols: [], text(r, c), colW, empty}].
+    sections(host, list, top = "") {
+      host.innerHTML = `<div class="cv" style="zoom:${zoom}">${top}${list.map((x, i) => `<section class="cv-block cv-sheet ${x.empty ? "cv-emptyblock" : ""}">
+          ${x.title ? `<header class="cv-head"><div class="cv-title"><h3>${esc(x.title)}</h3>${x.sub ? `<span>${x.sub}</span>` : ""}</div>${x.empty ? `<button type="button" class="xl-btn" data-show="${esc(x.title)}">Add values</button>` : ""}</header>` : ""}
+          ${x.empty ? "" : `<div class="cv-body" data-i="${i}"></div>`}
+        </section>`).join("")}</div>`;
+      host.querySelectorAll(".cv-body").forEach((el) => {
+        const x = list[el.dataset.i];
+        SheetView.render(wb, sheetName, el, { zoom: 1, modern: true, isEdited, isEditable, showHidden: SHOW_HIDDEN.has(sheetName),
+          rows: new Set(x.rows), cols: x.cols && new Set(x.cols), text: x.text, colW: x.colW });
+      });
+      host.querySelectorAll("[data-show]").forEach((b) => b.addEventListener("click", () => { shownEmpty.add(b.dataset.show); draw(); }));
+    },
+    findRow(c, re, from = 1) {
+      const sh = wb.sheet(sheetName);
+      for (let r = from; r <= sh.maxRow; r++) if (re.test(this.t(r, c))) return r;
+      return null;
+    },
+
+    // Cover: the client, the review and the sheet's document details.
+    "1"(host) {
+      const logo = (wb.drawings["1"] || []).find((d) => d.img);
+      const [title, sub = ""] = this.t(8, 4).split("\n");
+      const tabs = wb.sheets.filter((s) => !s.hidden && s.name !== "1");
+      host.innerHTML = `<div class="cv" style="zoom:${zoom}">
+        <section class="cv-cover">
+          <div class="cv-cover-main">
+            ${logo ? `<div class="cv-cover-logo"><img src="${logo.img}" alt=""></div>` : ""}
+            <span class="cv-eyebrow">${esc(title)} ${esc(sub)}</span>
+            <h2>${this.val(17, 4)}</h2>
+            <p>Review date ${esc(SheetView.format(SheetView.toSerial(new Date(`${edits.reviewDate || data.today}T00:00:00Z`)), "dd mmm yyyy").text)}</p>
+          </div>
+          <dl class="cv-cover-meta">${[3, 4, 5].map((r) => `<div><dt>${esc(this.t(r, 16))}</dt><dd>${this.val(r, 17)}</dd></div>`).join("")}</dl>
+        </section>
+        <div class="cv-tiles">${tabs.map((s, i) => `<button type="button" class="cv-tile" data-goto="${esc(s.name)}"><i class="cv-logo cv-t${i % 6}">${i + 1}</i>
+          <span><b>${esc(TAB_NAMES[s.name] || s.name.replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase()))}</b><small>Open this section</small></span><em>›</em></button>`).join("")}</div>
+      </div>`;
+      host.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => $("xlTabs").querySelector(`[data-sheet="${CSS.escape(b.dataset.goto)}"]`)?.click()));
+    },
+
+    // Summary: today's wealth and live SIP, and the two journey charts.
+    Summary(host) {
+      const charts = (wb.drawings.Summary || []).filter((d) => d.chart);
+      const tile = (lr, vr, cls) => `<section class="cv-hero ${cls}"><span>${esc(this.t(lr, 8))}</span><b>${esc(this.t(vr, 8)) || "–"}</b></section>`;
+      host.innerHTML = `<div class="cv" style="zoom:${zoom}">
+        <div class="cv-two">${tile(5, 11, "cv-hero-a")}${tile(18, 24, "cv-hero-b")}</div>
+        <div class="cv-two">${charts.map((d) => `<section class="cv-block cv-chart">${SheetView.chart(wb, d.chart, 640, 330, true)}</section>`).join("")}</div>
+      </div>`;
+    },
+
+    // Portfolio Journey: a card per platform and per section, with the years up to the review.
+    "Portfolio Journey"(host) {
+      const sh = wb.sheet(sheetName);
+      const start = this.n(5, 6) || 0, rd = this.n(2, 7);
+      const year = rd ? SheetView.fromSerial(rd).getUTCFullYear() : start;
+      let last = 6 + Math.max(0, year - start);
+      for (const x of sh.cells.values()) if (x.r > 5 && x.c > last && typeof x.v === "number" && !x.f) last = x.c;
+      const cols = [2, 3, 4, 5, ...this.range(6, last)];
+      const yc = 6 + Math.max(0, year - start);
+      // The platform's name is the card's title, so its cell in the table is left blank.
+      const head = (label, r1) => (r, c) => ((r === 5 || r === r1) && c === 2 ? label : undefined);
+      const colW = { 4: 170, 5: 190, ...Object.fromEntries(this.range(6, last).map((c) => [c, 120])) };
+      const has = (a, b) => this.range(a, b).some((r) => this.range(6, last).some((c) => { const x = wb.raw(sheetName, r, c); return x && !x.f && typeof x.v === "number" && x.v; }));
+      const stocks = this.findRow(2, /^STOCKS$/i, 6) || sh.maxRow + 1;
+      const total = this.findRow(2, /^TOTAL$/i, 6);
+      const list = [];
+      for (const m of sh.merges.filter((m) => m.c1 === 2 && m.r1 > 5 && m.r2 < (total || stocks)).sort((a, b) => a.r1 - b.r1)) {
+        const name = this.t(m.r1, 2);
+        const empty = !has(m.r1, m.r2) && !shownEmpty.has(name);
+        list.push({ title: name, sub: empty ? "Mutual funds · no values yet" : `Mutual funds · ${fmt.money(this.n(m.r2 - 1, yc) ?? 0)} in ${year}`, rows: [5, ...this.range(m.r1, m.r2)], cols, colW, text: head("", m.r1), empty });
+      }
+      const secs = [
+        [total, stocks - 1, "All mutual funds", "Totals across platforms"],
+        [stocks + 1, (this.findRow(2, /^OTHER SAVINGS/i, stocks) || 0) - 1, "Stocks & PMS", ""],
+      ];
+      const other = this.findRow(2, /^OTHER SAVINGS/i, stocks), grand = this.findRow(2, /^Grand Total Portfolio Value/i, stocks);
+      const passive = this.findRow(2, /^Existing Passive Income/i, stocks);
+      if (other) secs.push([other + 1, (grand || sh.maxRow + 1) - 1, "Other savings & investments", ""]);
+      if (grand) secs.push([grand, (passive || sh.maxRow + 1) - 1, "Grand total", "All assets"]);
+      if (passive) secs.push([passive + 1, sh.maxRow, "Passive income", "Existing monthly provision"]);
+      for (const [a, b, title, sub] of secs) {
+        if (!a || b < a) continue;
+        const rows = this.range(a, b).filter((r) => this.t(r, 2) || this.t(r, 4) || this.t(r, 5));
+        list.push({ title, sub, rows: [5, ...rows], cols, colW, text: head("") });
+      }
+      this.sections(host, list);
+    },
+
+    // Summary Portfolio: a card per platform with one row per upload date.
+    "SUMMARY PORTFOLIO"(host) {
+      const sh = wb.sheet(sheetName);
+      const rows = this.range(3, sh.maxRow).filter((r) => this.v(r, 1) !== null && this.v(r, 1) !== "");
+      const groups = sh.merges.filter((m) => m.r1 === 1).sort((a, b) => a.c1 - b.c1);
+      const filled = [], empty = [];
+      for (const m of groups) {
+        const any = rows.some((r) => this.range(m.c1, m.c2).some((c) => { const v = this.n(r, c); return v !== null && v !== 0; }));
+        (any ? filled : empty).push(m);
+      }
+      const list = filled.map((m) => ({ title: this.t(1, m.c1), sub: `${rows.length} review date${rows.length === 1 ? "" : "s"}`, rows: [2, ...rows], cols: [1, 2, ...this.range(m.c1, m.c2)], colW: { 1: 104, 2: 150, ...Object.fromEntries(this.range(m.c1, m.c2).map((c) => [c, 96])) } }));
+      const blank = empty.map((m) => this.t(1, m.c1)).filter(Boolean);
+      const note = blank.length ? `<p class="cv-note-line">No figures yet for ${blank.map(esc).join(", ")}. Use Excel view to type them in.</p>` : "";
+      this.sections(host, list);
+      if (note) host.querySelector(".cv").insertAdjacentHTML("beforeend", note);
+    },
+
+    // Freedom Blueprint: a card per section (A to E, the passive income question, conclusion).
+    "Freedom Blueprint"(host) {
+      const sh = wb.sheet(sheetName);
+      const marks = [];
+      for (let r = 1; r <= sh.maxRow; r++) {
+        const t = this.t(r, 2);
+        if (/^Section [A-Z]\b|^CONCLUSION$/i.test(t)) marks.push({ r, title: t.replace(/\s*:\s*/, " · "), skip: true });
+        else if (/^In How Many Years/i.test(t)) marks.push({ r, title: "", skip: false });
+      }
+      const cols = this.range(1, 16);
+      const list = marks.map((m, i) => {
+        const end = (marks[i + 1]?.r || sh.maxRow + 1) - 1;
+        // Section A's title row also holds the review date.
+        const keepTitle = m.skip && this.range(3, 16).some((c) => c !== 2 && this.t(m.r, c));
+        return { title: m.title, rows: this.range(m.skip && !keepTitle ? m.r + 1 : m.r, end), cols, text: keepTitle ? (r, c) => (r === m.r && c === 2 ? "" : undefined) : undefined };
+      });
+      this.sections(host, list);
     },
   };
 
