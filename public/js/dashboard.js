@@ -101,20 +101,27 @@ const Dashboard = (() => {
 
   // The same rows as dataTable, drawn as cards: avatar + name, a row of figures, actions on the right.
   // Search and sort stay; a long list shows PAGE cards at a time with "Show more".
-  function cardList(host, { columns, rows, onClick, searchPlaceholder, footer, initialSort }) {
+  // Options: statCols (grid columns for the figures), stacked (figures on their own line under the name),
+  // avatar(row) -> {text, color}, footerTitle / footerSub for the total card.
+  function cardList(host, { columns, rows, onClick, searchPlaceholder, footer, initialSort, statCols, stacked, avatar, footerTitle, footerSub }) {
     const PAGE = 40;
     const title = columns.find((c) => c.card === "title"), sub = columns.find((c) => c.card === "sub");
     const actions = columns.filter((c) => c.card === "action"), stats = columns.filter((c) => !c.card);
     const sortable = columns.filter((c) => c.card !== "action");
     let sortCol = columns[initialSort] || null, dir = sortCol?.num ? -1 : 1, term = "", shown = PAGE;
-    const statGrid = (cells) => `<div class="dc-stats">${cells}</div>`;
+    const statGrid = (cells) => `<div class="dc-stats"${statCols ? ` style="grid-template-columns:${statCols}"` : ""}>${cells}</div>`;
+    const badge = (r) => {
+      const a = avatar ? avatar(r) : { text: initials(title.value(r)), color: hue(title.value(r)) };
+      return `<span class="dc-avatar${a.text.length > 2 ? " dc-avatar-sm" : ""}" style="--c:${a.color}">${esc(a.text)}</span>`;
+    };
+    const quiet = !searchPlaceholder && rows.length < 3;
     host.innerHTML = `
-      <div class="toolbar dc-toolbar">${searchPlaceholder ? `<input type="search" placeholder="${esc(searchPlaceholder)}" aria-label="Search">` : ""}
+      <div class="toolbar dc-toolbar"${quiet ? " hidden" : ""}>${searchPlaceholder ? `<input type="search" placeholder="${esc(searchPlaceholder)}" aria-label="Search">` : ""}
         <div class="dc-sort"><span class="muted small">Sort by</span><select aria-label="Sort by">${sortable.map((c) =>
           `<option value="${columns.indexOf(c)}"${c === sortCol ? " selected" : ""}>${esc(c.label)}</option>`).join("")}</select>
           <button type="button" class="outline dc-dir" title="Change sort direction"></button><span class="muted count"></span></div></div>
-      ${footer ? `<div class="dc-card dc-total"><div class="dc-who"><span class="dc-avatar">Σ</span><div><div class="dc-name">${footer[0] ?? "Total"}</div>
-        <div class="muted small">All clients in this view</div></div></div>${statGrid(stats.map((c) =>
+      ${footer ? `<div class="dc-card dc-total${stacked ? " dc-stacked" : ""}"><div class="dc-who"><span class="dc-avatar">Σ</span><div><div class="dc-name">${footerTitle || footer[0] || "Total"}</div>
+        <div class="muted small">${footerSub || "All clients in this view"}</div></div></div>${statGrid(stats.map((c) =>
           `<div><span class="dc-l">${esc(c.label)}</span><span class="dc-v">${footer[columns.indexOf(c)] ?? "–"}</span></div>`).join(""))}<div class="dc-act"></div></div>` : ""}
       <div class="dc-list"></div><div class="dc-more"></div>`;
     const list = host.querySelector(".dc-list"), more = host.querySelector(".dc-more"), count = host.querySelector(".count");
@@ -134,9 +141,9 @@ const Dashboard = (() => {
       dirBtn.textContent = dir === 1 ? (sortCol?.num ? "Low → High" : "A → Z") : (sortCol?.num ? "High → Low" : "Z → A");
       list.innerHTML = items.length ? items.slice(0, shown).map((r) => {
         const name = title.value(r);
-        return `<div class="dc-card${onClick ? " click" : ""}" ${onClick ? `tabindex="0" data-i="${rows.indexOf(r)}"` : ""}>
-          <div class="dc-who"><span class="dc-avatar" style="--c:${hue(name)}">${esc(initials(name))}</span><div class="dc-id">
-            <div class="dc-name">${title.cardHtml ? title.cardHtml(r) : esc(name)}</div>${sub ? `<div class="muted small dc-sub">${esc(sub.value(r) ?? "–")}</div>${sub.cardExtra ? `<div class="dc-chips">${sub.cardExtra(r)}</div>` : ""}` : ""}</div></div>
+        return `<div class="dc-card${stacked ? " dc-stacked" : ""}${onClick ? " click" : ""}" ${onClick ? `tabindex="0" data-i="${rows.indexOf(r)}"` : ""}>
+          <div class="dc-who">${badge(r)}<div class="dc-id">
+            <div class="dc-name">${title.cardHtml ? title.cardHtml(r) : esc(name)}</div>${sub ? `<div class="muted small dc-sub">${sub.cardHtml ? sub.cardHtml(r) : esc(sub.value(r) ?? "–")}</div>${sub.cardExtra ? `<div class="dc-chips">${sub.cardExtra(r)}</div>` : ""}` : ""}</div></div>
           ${statGrid(stats.map((c) => `<div><span class="dc-l">${esc(c.label)}</span><span class="dc-v">${c.html ? c.html(r) : esc(c.value(r) ?? "–")}</span></div>`).join(""))}
           <div class="dc-act">${actions.map((c) => c.html(r)).join("")}</div></div>`;
       }).join("") : `<div class="dc-empty muted">Nothing matches your search.</div>`;
@@ -545,12 +552,15 @@ const Dashboard = (() => {
       <div class="card"><h3 class="section-title">Update history</h3><p class="muted small" style="margin:-6px 0 10px">Every upload with this client's data is kept. The latest version of each platform + category is used above.</p><div id="histTable"></div></div>`;
 
     dataTable($("ppTable"), {
-      rows: d.platformProducts, initialSort: 4,
+      rows: d.platformProducts, initialSort: 4, cards: true, statCols: "120px 120px 150px 70px 110px",
+      avatar: (r) => ({ text: r.product, color: CAT_COLORS[r.product] || CAT_COLORS.Other }),
       onClick: (r) => { location.hash = platLink(r.platform, r.product); },
       columns: [
-        { label: "Category", value: (r) => r.product, html: (r) => `<a href="${catLink(r.product)}">${esc(r.product)}</a>` },
-        { label: "Platform", value: (r) => r.platform, html: (r) => `<a href="${platLink(r.platform, r.product)}">${esc(r.platform)}</a>` },
-        { label: "Version", value: (r) => r.version, num: true, html: (r) => `v${r.version}<span class="note">${fmt.date(r.snapshot_date)}</span>` },
+        { label: "Category", card: "sub", value: (r) => r.product, html: (r) => `<a href="${catLink(r.product)}">${esc(r.product)}</a>`,
+          cardHtml: (r) => `<a href="${catLink(r.product)}">${esc(r.product)}</a> · v${r.version} · as at ${fmt.date(r.snapshot_date)}` },
+        { label: "Platform", card: "title", value: (r) => r.platform, html: (r) => `<a href="${platLink(r.platform, r.product)}">${esc(r.platform)}</a>`,
+          cardHtml: (r) => `<a href="${platLink(r.platform, r.product)}">${esc(r.platform)}</a>` },
+        { label: "Version", card: "hide", value: (r) => r.version, num: true, html: (r) => `v${r.version}<span class="note">${fmt.date(r.snapshot_date)}</span>` },
         { label: "Invested", value: (r) => r.invested, num: true, html: (r) => (r.product === "LAS" || !r.holdings ? "–" : fmt.money(r.invested)) },
         { label: "Current Value", value: (r) => r.current_value, num: true, html: (r) => (!r.holdings ? "–" : `${fmt.money(r.current_value)}${r.product === "LAS" ? '<span class="note">loan outstanding</span>' : ""}`) },
         { label: "Gain", value: (r) => r.gain_loss, num: true, html: (r) => (r.product === "LAS" || !r.holdings ? "–" : gainText(r.gain_loss, r.return_pct)) },
@@ -565,18 +575,23 @@ const Dashboard = (() => {
     const aum = d.holdings.filter((h) => h.product !== "LAS");
     dataTable($("schemeTable"), {
       rows: d.holdings, searchPlaceholder: "Search scheme, folio, ISIN, platform or category", initialSort: 10, wide: true,
+      cards: true, stacked: true, statCols: "repeat(9, minmax(0, 1fr))",
+      avatar: (r) => ({ text: r.product, color: CAT_COLORS[r.product] || CAT_COLORS.Other }),
+      footerTitle: "Total AUM", footerSub: `${plural(aum.length, "scheme")} · excluding loans`,
       columns: [
-        { label: "No", value: (r) => d.holdings.indexOf(r) + 1, num: true },
-        { label: "Category", value: (r) => r.product, search: true, cls: "nw" },
-        { label: "Platform", value: (r) => r.platform, search: true, cls: "nw" },
-        { label: "Folio / Symbol", value: (r) => r.identifier, search: true },
-        { label: "Scheme Name", value: (r) => r.security_name, search: true, cls: "scheme",
+        { label: "No", card: "hide", value: (r) => d.holdings.indexOf(r) + 1, num: true },
+        { label: "Category", card: "hide", value: (r) => r.product, search: true, cls: "nw" },
+        { label: "Platform", card: "hide", value: (r) => r.platform, search: true, cls: "nw" },
+        { label: "Folio / Symbol", card: "sub", value: (r) => r.identifier, search: true,
+          cardHtml: (r) => `${esc(r.platform)} · ${r.identifier ? `Folio ${esc(r.identifier)}` : "No folio"}${r.isin ? ` · ${esc(r.isin)}` : ""} · NAV date ${fmt.date(r.as_of)}
+            <span class="dc-chips dc-inline"><span class="chip">${esc(r.asset_class || "Unclassified")}</span></span>` },
+        { label: "Scheme Name", card: "title", value: (r) => r.security_name, search: true, cls: "scheme",
           html: (r) => `${esc(r.security_name || "–")}<span class="chip">${esc(r.asset_class || "Unclassified")}</span>${r.isin ? `<span class="note">${esc(r.isin)}</span>` : ""}` },
         { label: "Units", value: (r) => r.quantity, num: true, html: (r) => fmt.qty(r.quantity) },
         { label: "Avg NAV / Cost", value: (r) => r.avg_cost, num: true, html: (r) => fmt.money2(r.avg_cost) },
         { label: "Inv. Cost", value: (r) => r.invested, num: true, html: (r) => fmt.money(r.invested) },
         { label: "Latest NAV / Price", value: (r) => r.current_price, num: true, html: (r) => fmt.money2(r.current_price) },
-        { label: "NAV Date", value: (r) => r.as_of, cls: "nw", html: (r) => fmt.date(r.as_of) },
+        { label: "NAV Date", card: "hide", value: (r) => r.as_of, cls: "nw", html: (r) => fmt.date(r.as_of) },
         { label: "Current Value", value: (r) => r.current_value, num: true, html: (r) => fmt.money(r.current_value) },
         { label: "Unrealised Gain", value: (r) => r.gain_loss, num: true, html: (r) => gainText(r.gain_loss) },
         { label: "Weight %", value: (r) => (total && r.product !== "LAS" ? (r.current_value || 0) / total * 100 : null), num: true,

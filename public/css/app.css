@@ -627,3 +627,13 @@ table.xl-grid.xl-modern td.xl-edited::after { border-color: transparent #f2a900 
   .dc-v .sip-link { align-items: flex-start; text-align: left; }
 }
 @media (max-width: 560px) { .dc-stats { grid-template-columns: repeat(2, 1fr); } }
+.dc-avatar-sm { font-size: 11px; letter-spacing: -.02em; }
+.dc-sub a { color: inherit; }
+.dc-chips.dc-inline { display: inline-flex; margin: 0 0 0 6px; vertical-align: 1px; }
+.dc-stacked { grid-template-columns: 1fr auto; }
+.dc-stacked .dc-name { white-space: normal; }
+.dc-stacked .dc-stats { grid-column: 1 / -1; grid-row: 2; padding-top: 10px; border-top: 1px dashed var(--line); gap: 4px 14px; }
+.dc-stacked .dc-act:empty, .dc-card .dc-act:empty { display: none; }
+@media (max-width: 1180px) { .dc-stacked .dc-stats { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; } }
+@media (max-width: 1180px) { .dc-stats[style] { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; } }
+@media (max-width: 560px) { .dc-stats[style], .dc-stacked .dc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
