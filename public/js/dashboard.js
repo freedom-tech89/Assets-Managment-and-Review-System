@@ -510,18 +510,21 @@ const Dashboard = (() => {
     if (!(pName && product)) {
       const rows = pName ? d.products : d.platforms;
       dataTable($("splitTable"), {
-        rows, initialSort: 2,
+        rows, initialSort: 2, cards: true, statCols: "60px 130px 130px 170px 64px 110px",
+        avatar: pName ? (r) => ({ text: r.product, color: CAT_COLORS[r.product] || CAT_COLORS.Other }) : null,
         onClick: (r) => { location.hash = platLink(pName || r.platform, product || r.product); },
         columns: [
-          pName ? { label: "Category", value: (r) => r.product, html: (r) => `<a href="${platLink(pName, r.product)}">${esc(r.product)}</a>` }
-            : { label: "Platform", value: (r) => r.platform, html: (r) => `<a href="${platLink(r.platform, product)}">${esc(r.platform)}</a>` },
+          pName ? { label: "Category", card: "title", value: (r) => r.product, html: (r) => `<a href="${platLink(pName, r.product)}">${esc(r.product)}</a>`,
+            cardHtml: (r) => `<a href="${platLink(pName, r.product)}">${esc(r.product)}</a>` }
+            : { label: "Platform", card: "title", value: (r) => r.platform, html: (r) => `<a href="${platLink(r.platform, product)}">${esc(r.platform)}</a>`,
+              cardHtml: (r) => `<a href="${platLink(r.platform, product)}">${esc(r.platform)}</a>` },
+          { label: "As at", card: "sub", value: (r) => r.as_of, cardHtml: (r) => `${pName ? esc(pName) : esc(product)} · data as at ${fmt.date(r.as_of)}` },
           { label: "Clients", value: (r) => r.clients, num: true },
           { label: "Current Value", value: (r) => r.current_value || r.loan_value, num: true, html: (r) => fmt.money(r.current_value || r.loan_value) },
           { label: "Invested", value: (r) => r.invested, num: true, html: (r) => fmt.money(r.invested) },
           { label: "Gain / Loss", value: (r) => r.gain_loss, num: true, html: (r) => gainText(r.gain_loss, r.return_pct) },
           { label: "XIRR", value: (r) => r.xirr, num: true, html: (r) => fmt.pct(r.xirr) },
           { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => sipCell(r, { platform: pName || r.platform, product: product || r.product }) },
-          { label: "As at", value: (r) => r.as_of, cls: "nw", html: (r) => fmt.date(r.as_of) },
         ],
       });
     }
