@@ -103,12 +103,12 @@ const Dashboard = (() => {
   // Search and sort stay; a long list shows PAGE cards at a time with "Show more".
   // Options: statCols (grid columns for the figures), stacked (figures on their own line under the name),
   // avatar(row) -> {text, color}, footerTitle / footerSub for the total card.
-  function cardList(host, { columns, rows, onClick, searchPlaceholder, footer, initialSort, statCols, stacked, avatar, footerTitle, footerSub }) {
+  function cardList(host, { columns, rows, onClick, searchPlaceholder, footer, initialSort, statCols, stacked, avatar, footerTitle, footerSub, initialDir }) {
     const PAGE = 40;
     const title = columns.find((c) => c.card === "title"), sub = columns.find((c) => c.card === "sub");
     const actions = columns.filter((c) => c.card === "action"), stats = columns.filter((c) => !c.card);
     const sortable = columns.filter((c) => c.card !== "action");
-    let sortCol = columns[initialSort] || null, dir = sortCol?.num ? -1 : 1, term = "", shown = PAGE;
+    let sortCol = columns[initialSort] || null, dir = initialDir || (sortCol?.num ? -1 : 1), term = "", shown = PAGE;
     const statGrid = (cells) => `<div class="dc-stats"${statCols ? ` style="grid-template-columns:${statCols}"` : ""}>${cells}</div>`;
     const badge = (r) => {
       const a = avatar ? avatar(r) : { text: initials(title.value(r)), color: hue(title.value(r)) };
@@ -138,7 +138,9 @@ const Dashboard = (() => {
           return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * dir;
         });
       }
-      dirBtn.textContent = dir === 1 ? (sortCol?.num ? "Low → High" : "A → Z") : (sortCol?.num ? "High → Low" : "Z → A");
+      const isDate = /uploaded|date|as of|as at/i.test(sortCol?.label || "");
+      dirBtn.textContent = isDate ? (dir === 1 ? "Oldest first" : "Newest first")
+        : dir === 1 ? (sortCol?.num ? "Low → High" : "A → Z") : (sortCol?.num ? "High → Low" : "Z → A");
       list.innerHTML = items.length ? items.slice(0, shown).map((r) => {
         const name = title.value(r);
         return `<div class="dc-card${stacked ? " dc-stacked" : ""}${onClick ? " click" : ""}" ${onClick ? `tabindex="0" data-i="${rows.indexOf(r)}"` : ""}>
@@ -373,14 +375,18 @@ const Dashboard = (() => {
 
   function historyTable(host, rows, { client } = {}) {
     dataTable(host, {
-      rows, initialSort: 0, searchPlaceholder: "Search file, platform or category",
+      rows, initialSort: 0, initialDir: -1, searchPlaceholder: "Search file, platform or category",
+      cards: true, statCols: client ? "60px 110px 120px 120px" : "60px 110px 60px 120px",
+      avatar: (r) => ({ text: KIND[r.kind], color: r.kind === "sip" ? "#0f766e" : "#1f3864" }),
       columns: [
-        { label: "Uploaded", value: (r) => r.uploadedAt || r.uploaded_at, cls: "nw" },
-        { label: "Type", value: (r) => ((r.uploadType || r.upload_type) === "platform" ? "Platform Wise" : "Client Wise") },
-        { label: "Category", value: (r) => r.product, search: true },
-        { label: "Platform", value: (r) => r.platform, search: true },
-        { label: "File", value: (r) => r.originalName || r.original_name, search: true,
-          html: (r) => `<span class="chip" style="margin:0 6px 0 0">${KIND[r.kind]}</span><a href="/api/uploads/${r.id}/file">${esc(r.originalName || r.original_name)}</a>` },
+        { label: "Uploaded", card: "hide", value: (r) => r.uploadedAt || r.uploaded_at, cls: "nw" },
+        { label: "Type", card: "sub", value: (r) => ((r.uploadType || r.upload_type) === "platform" ? "Platform Wise" : "Client Wise"),
+          cardHtml: (r) => `${esc(r.platform)} · ${esc(r.product)} · ${(r.uploadType || r.upload_type) === "platform" ? "Platform Wise" : "Client Wise"} · uploaded ${esc(r.uploadedAt || r.uploaded_at)}` },
+        { label: "Category", card: "hide", value: (r) => r.product, search: true },
+        { label: "Platform", card: "hide", value: (r) => r.platform, search: true },
+        { label: "File", card: "title", value: (r) => r.originalName || r.original_name, search: true,
+          html: (r) => `<span class="chip" style="margin:0 6px 0 0">${KIND[r.kind]}</span><a href="/api/uploads/${r.id}/file">${esc(r.originalName || r.original_name)}</a>`,
+          cardHtml: (r) => `<a href="/api/uploads/${r.id}/file">${esc(r.originalName || r.original_name)}</a>` },
         { label: "Version", value: (r) => r.version, num: true, html: (r) => `v${r.version}` },
         { label: "Data as of", value: (r) => r.snapshotDate || r.snapshot_date, cls: "nw", html: (r) => fmt.date(r.snapshotDate || r.snapshot_date) },
         ...(client ? [

@@ -303,25 +303,28 @@ const Admin = (() => {
     } catch (e) { /* shown elsewhere */ }
   }
 
+  // One card per upload: kind badge, file name, who/where/when, then version, date, rows, status.
+  const KIND_COLOR = { aum: "#1f3864", sip: "#0f766e" };
   function renderHistory(list) {
     if (!list.length) {
-      el.history.innerHTML = `<tr class="empty"><td colspan="11">No uploads yet.</td></tr>`;
+      el.history.innerHTML = `<div class="dc-empty muted">No uploads yet.</div>`;
       return;
     }
     el.history.innerHTML = list.map((u) => {
       const st = u.status === "Processed" ? "ok" : u.status === "Unreadable" ? "err" : "warn";
-      return `<tr>
-        <td class="nw">${esc(u.uploadedAt)}</td>
-        <td>${u.uploadType === "client" ? "Client Wise" : "Platform Wise"}</td>
-        <td>${u.uploadType === "client" ? esc(u.clientName) : `<span class="muted">${u.clientsCount} clients</span>`}</td>
-        <td>${esc(u.platform)}</td><td>${esc(u.product)}</td>
-        <td><span class="chip" style="margin:0 6px 0 0">${KIND_LABEL[u.kind]}</span>${u.hasFile ? `<a href="/api/uploads/${u.id}/file">${esc(u.originalName)}</a>` : esc(u.originalName)}
-          ${u.notes ? `<span class="note">${esc(u.notes)}</span>` : ""}</td>
-        <td class="nw">v${u.version} ${u.current ? `<span class="badge ok">In use</span>` : `<span class="badge muted">Older</span>`}</td>
-        <td class="nw">${esc(fmt.date(u.snapshotDate))}</td>
-        <td class="num">${u.rowsCount}</td>
-        <td><span class="badge ${st}">${esc(u.status)}</span></td>
-        <td><button class="link" data-del="${u.id}">Remove</button></td></tr>`;
+      const who = u.uploadType === "client" ? esc(u.clientName) : `${u.clientsCount} clients`;
+      return `<div class="dc-card dc-upload${u.current ? "" : " dc-old"}">
+        <div class="dc-who"><span class="dc-avatar dc-avatar-sm" style="--c:${KIND_COLOR[u.kind] || "#6b7385"}">${KIND_LABEL[u.kind]}</span><div class="dc-id">
+          <div class="dc-name dc-file">${u.hasFile ? `<a href="/api/uploads/${u.id}/file">${esc(u.originalName)}</a>` : esc(u.originalName)}</div>
+          <div class="muted small dc-sub"><b>${who}</b> · ${esc(u.platform)} · ${esc(u.product)} · ${u.uploadType === "client" ? "Client Wise" : "Platform Wise"}</div>
+          <div class="muted small">Uploaded ${esc(u.uploadedAt)}${u.notes ? ` · ${esc(u.notes)}` : ""}</div></div></div>
+        <div class="dc-stats" style="grid-template-columns:110px 110px 60px 110px">
+          <div><span class="dc-l">Version</span><span class="dc-v">v${u.version} ${u.current ? `<span class="badge ok">In use</span>` : `<span class="badge muted">Older</span>`}</span></div>
+          <div><span class="dc-l">Data as of</span><span class="dc-v">${esc(fmt.date(u.snapshotDate))}</span></div>
+          <div><span class="dc-l">Rows</span><span class="dc-v">${u.rowsCount}</span></div>
+          <div><span class="dc-l">Status</span><span class="dc-v"><span class="badge ${st}">${esc(u.status)}</span></span></div>
+        </div>
+        <div class="dc-act"><button class="link" data-del="${u.id}">Remove</button></div></div>`;
     }).join("");
   }
 

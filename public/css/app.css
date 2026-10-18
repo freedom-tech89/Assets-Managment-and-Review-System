@@ -637,3 +637,9 @@ table.xl-grid.xl-modern td.xl-edited::after { border-color: transparent #f2a900 
 @media (max-width: 1180px) { .dc-stacked .dc-stats { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; } }
 @media (max-width: 1180px) { .dc-stats[style] { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; } }
 @media (max-width: 560px) { .dc-stats[style], .dc-stacked .dc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
+.dc-file { white-space: normal; word-break: break-word; }
+.dc-upload .dc-stats { text-align: left; }
+.dc-upload .dc-v .badge { margin-left: 2px; }
+.dc-old { background: #fbfcfd; }
+.dc-old .dc-avatar { opacity: .55; }
+#historyRows { margin-top: 12px; }
