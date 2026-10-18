@@ -579,3 +579,51 @@ table.xl-grid.xl-modern td.xl-edited::after { border-color: transparent #f2a900 
 .cv-one .cv-tablewrap { justify-self: start; min-width: min(100%, 640px); }
 .cv-one .cv-table thead th:not(:first-child) { min-width: 130px; }
 .cv-stats-auto span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- Dashboard card look (matches the Review Report cards) ---- */
+#dashView .card { border-radius: 16px; box-shadow: 0 1px 3px rgba(16,24,40,.05); }
+#dashView .kpi { border-radius: 16px; border-top: 0; box-shadow: 0 1px 3px rgba(16,24,40,.05); position: relative; overflow: hidden; padding: 16px 18px 14px 22px; }
+#dashView .kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: var(--c, var(--primary)); }
+#dashView .kpi .v { font-size: 23px; }
+#dashView .kpi .l { text-transform: uppercase; letter-spacing: .04em; font-size: 11.5px; font-weight: 600; }
+#dashView .ccard, #dashView .pcard { border-radius: 16px; box-shadow: 0 1px 3px rgba(16,24,40,.05); }
+#dashView .ccard:hover, #dashView .pcard:hover { box-shadow: 0 6px 20px rgba(31,56,100,.12); transform: translateY(-1px); }
+#dashView .ccard, #dashView .pcard { transition: box-shadow .15s, transform .15s, border-color .15s; }
+#dashView .pcard .top { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+#dashView .pcard dl { margin-top: 4px; }
+#dashView .pcard dt, .dc-l { text-transform: uppercase; letter-spacing: .04em; font-size: 10.5px; font-weight: 600; color: var(--muted); }
+
+/* Client cards */
+.dc-toolbar { gap: 12px; }
+.dc-sort { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dc-sort select { padding: 6px 8px; border-radius: 8px; }
+.dc-dir { padding: 5px 10px; font-size: 12.5px; white-space: nowrap; }
+.dc-list { display: flex; flex-direction: column; gap: 10px; }
+.dc-card { display: grid; padding-right: 14px; grid-template-columns: minmax(190px, 1fr) auto auto; align-items: center; gap: 12px 20px; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; box-shadow: 0 1px 2px rgba(16,24,40,.04); transition: box-shadow .15s, border-color .15s; }
+.dc-card.click { cursor: pointer; }
+.dc-card.click:hover, .dc-card.click:focus-visible { border-color: #c4cfe3; box-shadow: 0 6px 18px rgba(31,56,100,.1); outline: none; }
+.dc-total { background: linear-gradient(180deg, #f5f8fd, #fff); border-color: #d6dff0; margin-bottom: 10px; }
+.dc-total .dc-avatar { background: var(--primary); }
+.dc-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dc-id { min-width: 0; }
+.dc-avatar { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; flex: none; font-weight: 800; font-size: 14px; color: #fff; background: var(--c, var(--primary)); }
+.dc-name { font-weight: 700; font-size: 15px; line-height: 1.3; }
+.dc-name a { color: var(--text); text-decoration: none; }
+.dc-name a:hover { color: var(--primary); text-decoration: underline; }
+.dc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.dc-chips .chip { margin: 0; font-size: 10.5px; }
+.dc-stats { display: grid; grid-template-columns: 58px 96px 100px 96px 64px 58px 92px 70px; gap: 4px 12px; text-align: right; }
+.dc-stats > div { display: flex; flex-direction: column; min-width: 0; }
+.dc-v { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 14px; }
+.dc-v .sip-link { text-align: right; display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.3; }
+.dc-v .sip-link .note { font-size: 11px; font-weight: 500; }
+.dc-act { display: flex; justify-content: flex-end; gap: 8px; }
+.dc-more { text-align: center; margin-top: 12px; }
+.dc-empty { text-align: center; padding: 24px; border: 1px dashed var(--line); border-radius: 14px; }
+@media (max-width: 1180px) {
+  .dc-card { grid-template-columns: 1fr auto; }
+  .dc-stats { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(4, 1fr); text-align: left; gap: 10px 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .dc-v .sip-link { align-items: flex-start; text-align: left; }
+}
+@media (max-width: 560px) { .dc-stats { grid-template-columns: repeat(2, 1fr); } }

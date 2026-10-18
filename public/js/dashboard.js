@@ -38,7 +38,10 @@ const Dashboard = (() => {
   }
 
   // Sortable, searchable table. columns: {label, value(row), html(row)?, num?, search?}
-  function dataTable(host, { columns, rows, onClick, searchPlaceholder, footer, initialSort, wide }) {
+  // cards: true draws each row as a card instead; columns then take card: "title" | "sub" | "action".
+  function dataTable(host, opts) {
+    if (opts.cards) return cardList(host, opts);
+    const { columns, rows, onClick, searchPlaceholder, footer, initialSort, wide } = opts;
     let sortIdx = initialSort ?? -1, dir = -1, term = "";
     host.innerHTML = `
       ${searchPlaceholder ? `<div class="toolbar"><input type="search" placeholder="${esc(searchPlaceholder)}" aria-label="Search">
@@ -88,6 +91,71 @@ const Dashboard = (() => {
       };
       tbody.addEventListener("click", go);
       tbody.addEventListener("keydown", (e) => { if (e.key === "Enter") go(e); });
+    }
+    draw();
+  }
+
+  const AVATAR = ["#1f3864", "#0f766e", "#b45309", "#7c3aed", "#e8590c", "#0284c7"];
+  const initials = (name) => String(name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const hue = (name) => AVATAR[[...String(name)].reduce((a, ch) => a + ch.charCodeAt(0), 0) % AVATAR.length];
+
+  // The same rows as dataTable, drawn as cards: avatar + name, a row of figures, actions on the right.
+  // Search and sort stay; a long list shows PAGE cards at a time with "Show more".
+  function cardList(host, { columns, rows, onClick, searchPlaceholder, footer, initialSort }) {
+    const PAGE = 40;
+    const title = columns.find((c) => c.card === "title"), sub = columns.find((c) => c.card === "sub");
+    const actions = columns.filter((c) => c.card === "action"), stats = columns.filter((c) => !c.card);
+    const sortable = columns.filter((c) => c.card !== "action");
+    let sortCol = columns[initialSort] || null, dir = sortCol?.num ? -1 : 1, term = "", shown = PAGE;
+    const statGrid = (cells) => `<div class="dc-stats">${cells}</div>`;
+    host.innerHTML = `
+      <div class="toolbar dc-toolbar">${searchPlaceholder ? `<input type="search" placeholder="${esc(searchPlaceholder)}" aria-label="Search">` : ""}
+        <div class="dc-sort"><span class="muted small">Sort by</span><select aria-label="Sort by">${sortable.map((c) =>
+          `<option value="${columns.indexOf(c)}"${c === sortCol ? " selected" : ""}>${esc(c.label)}</option>`).join("")}</select>
+          <button type="button" class="outline dc-dir" title="Change sort direction"></button><span class="muted count"></span></div></div>
+      ${footer ? `<div class="dc-card dc-total"><div class="dc-who"><span class="dc-avatar">Σ</span><div><div class="dc-name">${footer[0] ?? "Total"}</div>
+        <div class="muted small">All clients in this view</div></div></div>${statGrid(stats.map((c) =>
+          `<div><span class="dc-l">${esc(c.label)}</span><span class="dc-v">${footer[columns.indexOf(c)] ?? "–"}</span></div>`).join(""))}<div class="dc-act"></div></div>` : ""}
+      <div class="dc-list"></div><div class="dc-more"></div>`;
+    const list = host.querySelector(".dc-list"), more = host.querySelector(".dc-more"), count = host.querySelector(".count");
+    const select = host.querySelector("select"), dirBtn = host.querySelector(".dc-dir");
+    function draw() {
+      let items = rows;
+      if (term) items = items.filter((r) => columns.some((c) => c.search && String(c.value(r) ?? "").toLowerCase().includes(term)));
+      if (sortCol) {
+        items = [...items].sort((a, b) => {
+          const x = sortCol.value(a), y = sortCol.value(b);
+          if (x === y) return 0;
+          if (x === null || x === undefined) return 1;
+          if (y === null || y === undefined) return -1;
+          return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * dir;
+        });
+      }
+      dirBtn.textContent = dir === 1 ? (sortCol?.num ? "Low → High" : "A → Z") : (sortCol?.num ? "High → Low" : "Z → A");
+      list.innerHTML = items.length ? items.slice(0, shown).map((r) => {
+        const name = title.value(r);
+        return `<div class="dc-card${onClick ? " click" : ""}" ${onClick ? `tabindex="0" data-i="${rows.indexOf(r)}"` : ""}>
+          <div class="dc-who"><span class="dc-avatar" style="--c:${hue(name)}">${esc(initials(name))}</span><div class="dc-id">
+            <div class="dc-name">${title.cardHtml ? title.cardHtml(r) : esc(name)}</div>${sub ? `<div class="muted small dc-sub">${esc(sub.value(r) ?? "–")}</div>${sub.cardExtra ? `<div class="dc-chips">${sub.cardExtra(r)}</div>` : ""}` : ""}</div></div>
+          ${statGrid(stats.map((c) => `<div><span class="dc-l">${esc(c.label)}</span><span class="dc-v">${c.html ? c.html(r) : esc(c.value(r) ?? "–")}</span></div>`).join(""))}
+          <div class="dc-act">${actions.map((c) => c.html(r)).join("")}</div></div>`;
+      }).join("") : `<div class="dc-empty muted">Nothing matches your search.</div>`;
+      more.innerHTML = items.length > shown ? `<button type="button" class="outline">Show more (${items.length - shown} left)</button>` : "";
+      if (count) count.textContent = `${Math.min(shown, items.length)} shown · ${items.length} of ${rows.length}`;
+    }
+    select.addEventListener("change", () => { sortCol = columns[Number(select.value)]; dir = sortCol.num ? -1 : 1; draw(); });
+    dirBtn.addEventListener("click", () => { dir = -dir; draw(); });
+    more.addEventListener("click", (e) => { if (e.target.closest("button")) { shown += PAGE; draw(); } });
+    const search = host.querySelector("input[type=search]");
+    if (search) search.addEventListener("input", () => { term = search.value.trim().toLowerCase(); shown = PAGE; draw(); });
+    if (onClick) {
+      const go = (e) => {
+        if (e.target.closest("[data-sips], [data-filter-sips], [data-review], a")) return;
+        const card = e.target.closest(".dc-card[data-i]");
+        if (card) onClick(rows[Number(card.dataset.i)]);
+      };
+      list.addEventListener("click", go);
+      list.addEventListener("keydown", (e) => { if (e.key === "Enter") go(e); });
     }
     draw();
   }
@@ -148,7 +216,7 @@ const Dashboard = (() => {
       rows, searchPlaceholder: "Search client, scheme, folio or platform", initialSort: 6, wide: false,
       onClick: (r) => sipDetail(r.id),
       columns: [
-        { label: "Client", value: (r) => r.client_name, search: true, html: (r) => `<b>${esc(r.client_name)}</b>` },
+        { label: "Client", card: "title", value: (r) => r.client_name, search: true, html: (r) => `<b>${esc(r.client_name)}</b>` },
         { label: "Category", value: (r) => r.product, search: true },
         { label: "Platform", value: (r) => r.platform, search: true, cls: "nw" },
         { label: "Scheme", value: (r) => r.security_name, search: true, cls: "scheme",
@@ -330,8 +398,9 @@ const Dashboard = (() => {
 
   function clientColumns(scope = {}) {
     return [
-      { label: "Client", value: (r) => r.client_name, search: true, html: (r) => `<a href="#/client/${enc(r.client_name)}">${esc(r.client_name)}</a>${chips(r.products)}` },
-      { label: "Client ID / PAN", value: (r) => r.client_id, search: true },
+      { label: "Client", card: "title", value: (r) => r.client_name, search: true, html: (r) => `<a href="#/client/${enc(r.client_name)}">${esc(r.client_name)}</a>${chips(r.products)}`,
+        cardHtml: (r) => `<a href="#/client/${enc(r.client_name)}">${esc(r.client_name)}</a>` },
+      { label: "Client ID / PAN", card: "sub", value: (r) => r.client_id, search: true, cardExtra: (r) => chips(r.products) },
       { label: "Holdings", value: (r) => r.holdings, num: true },
       { label: "Invested", value: (r) => r.invested, num: true, html: (r) => fmt.money(r.invested) },
       { label: "Current Value", value: (r) => r.current_value, num: true, html: (r) => fmt.money(r.current_value) },
@@ -340,7 +409,7 @@ const Dashboard = (() => {
       { label: "XIRR %", value: (r) => r.xirr, num: true, html: (r) => fmt.pct(r.xirr) },
       { label: "Monthly SIP", value: (r) => r.sip_monthly, num: true, html: (r) => sipCell(r, { client: r.client_name, ...scope }) },
       { label: "Loans", value: (r) => r.loan_value, num: true, html: (r) => (r.loan_value ? fmt.money(r.loan_value) : "–") },
-      { label: "Review", value: () => "", cls: "nw", html: (r) => reviewButton(r.client_name) },
+      { label: "Review", card: "action", value: () => "", cls: "nw", html: (r) => reviewButton(r.client_name) },
     ];
   }
 
@@ -397,7 +466,7 @@ const Dashboard = (() => {
       </div></div>
       <div class="card"><h3 class="section-title">Clients</h3><div id="clientTable"></div></div>`;
     dataTable($("clientTable"), {
-      rows: d.clients, searchPlaceholder: "Search clients", initialSort: 4,
+      rows: d.clients, searchPlaceholder: "Search clients", initialSort: 4, cards: true,
       onClick: (r) => { location.hash = `#/client/${enc(r.client_name)}`; },
       columns: clientColumns(),
     });
@@ -421,8 +490,8 @@ const Dashboard = (() => {
         <button class="outline" id="dlScope">Download Excel report</button></div>
       ${allKpis(t)}
       ${!(pName && product) ? `<div class="card"><h3 class="section-title">${pName ? "By category" : "By platform"}</h3><div id="splitTable"></div></div>` : ""}
-      <div class="two-col"><div class="card"><h3 class="section-title">Clients</h3><div id="clientTable"></div></div>
-      <div>${allocation(d.assets, t.current_value)}</div></div>
+      ${d.assets.length ? `<div class="alloc-wide">${allocation(d.assets, t.current_value)}</div>` : ""}
+      <div class="card"><h3 class="section-title">Clients</h3><div id="clientTable"></div></div>
       <div class="card"><h3 class="section-title">Update history</h3><div id="histTable"></div></div>`;
 
     if (!(pName && product)) {
@@ -444,7 +513,7 @@ const Dashboard = (() => {
       });
     }
     dataTable($("clientTable"), {
-      rows: d.clients, searchPlaceholder: "Search clients", initialSort: 4,
+      rows: d.clients, searchPlaceholder: "Search clients", initialSort: 4, cards: true,
       onClick: (r) => { location.hash = `#/client/${enc(r.client_name)}`; },
       columns: clientColumns({ platform: pName || "", product: product || "" }),
       footer: ["Total", "", t.holdings, fmt.money(t.invested), fmt.money(t.current_value), gainText(t.gain_loss), fmt.pct(t.return_pct),
