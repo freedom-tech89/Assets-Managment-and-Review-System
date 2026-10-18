@@ -472,7 +472,7 @@ const ReviewPage = (() => {
     // ---- Shared pieces for the card pages ----
     str(r, c) { const x = wb.raw(sheetName, r, c); return x && !x.f && typeof x.v === "string" && x.v.trim() ? x.v.trim() : null; },
     filled(r, cols) { return cols.some((c) => { const v = this.v(r, c); return v !== null && v !== undefined && v !== "" && v !== 0; }); },
-    stat: (label, value, cls = "") => `<div class="${cls}"><span>${esc(label)}</span><b>${value}</b></div>`,
+    stat: (label, value, cls = "") => `<div class="${cls}"><span title="${esc(label)}">${esc(label)}</span><b>${value}</b></div>`,
     // A card that opens with its dropdown. o: {key, logo, logoCls, title, sub, stats, body() (only built when open), dim}.
     drop(o) {
       const open = openCards.has(o.key);
@@ -563,7 +563,7 @@ const ReviewPage = (() => {
         for (const it of items) if (/^TOTAL$/i.test(it.name)) { it.name = "All platforms"; it.head = stats[0]; it.sip = stats[1]; }
         sections.push(this.drop({ key: `pj|${key}`, logo, logoCls: `cv-t${sections.length % 6}`, title,
           sub: `${sub} · ${items.length} ${key === "passive" ? "source" : "item"}${items.length === 1 ? "" : "s"}`,
-          stats: stats.slice(0, 2).map((r) => this.stat(this.str(r, 2).replace(/\s*\(.*\)$/, ""), money(r))).join(""),
+          stats: [0, 1].map((k) => (stats[k] ? this.stat(this.str(stats[k], 2).replace(/\s*\(.*\)$/, "").replace(/^Grand Total\s*:\s*/i, "Total "), money(stats[k])) : "<div></div>")).join(""),
           body: () => `<div class="cv-groups">${items.map((it, i) => item(key, it, i)).join("")}</div>
             ${notes.length ? `<div class="cv-notes">${this.table(notes.map((r) => ({ r, label: this.str(r, 2) })), years, { corner: "Notes", cls: "cv-table-notes" })}</div>` : ""}` }));
       };
@@ -613,7 +613,7 @@ const ReviewPage = (() => {
         return this.drop({ key: `sp|${g.title}`, logo: this.initials(g.title.replace(/\b(TOTAL|PORTFOLIO)\b/gi, "").trim() || g.title), logoCls: `cv-t${i % 6}`,
           title: g.title.replace(/\b\w+/g, (w) => (w.length > 3 || !/^[A-Z]+$/.test(w) ? w[0] + w.slice(1).toLowerCase() : w)), dim: !any,
           sub: any ? `${g.cols.length} column${g.cols.length === 1 ? "" : "s"} · latest ${esc(this.t(latest, 1))}` : "No figures yet · open to add",
-          stats: any ? [tot && this.stat(head(tot).replace(/^TOTAL\s*/i, "") || "Total", fmt.money(this.n(latest, tot) ?? 0)), sip && sip !== tot && this.stat("Live SIP", fmt.money(this.n(latest, sip) ?? 0))].filter(Boolean).join("") : "",
+          stats: any ? (tot ? this.stat(head(tot).replace(/^TOTAL\s*/i, "") || "Total", fmt.money(this.n(latest, tot) ?? 0)) : "<div></div>") + (sip && sip !== tot ? this.stat("Live SIP", fmt.money(this.n(latest, sip) ?? 0)) : "<div></div>") : "",
           body: () => this.table(dates.map((r) => ({ r, label: this.t(r, 1) })), g.cols.map((c) => ({ c, label: head(c) })), { corner: "Review date" }) });
       });
       this.page(host, hist + cards.join(""));
