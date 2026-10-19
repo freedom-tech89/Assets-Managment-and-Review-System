@@ -643,3 +643,27 @@ table.xl-grid.xl-modern td.xl-edited::after { border-color: transparent #f2a900 
 .dc-old { background: #fbfcfd; }
 .dc-old .dc-avatar { opacity: .55; }
 #historyRows { margin-top: 12px; }
+
+/* Portfolio Journey: table + bar chart side by side */
+.cv-jsplit { display: grid; grid-template-columns: max-content minmax(300px, 1fr); gap: 16px; align-items: start; }
+.cv-jsplit .cv-tablewrap { min-width: 0 !important; }
+.cv-bars { --bar0: #1f3864; --bar1: #0f766e; --bar2: #b45309; --bar3: #7c3aed; --bar4: #e8590c; --bar5: #0284c7;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.cv-bars-h { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.cv-bars-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 16px; border-style: dashed; }
+.cv-hb { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 10px; font-size: 13px; }
+.cv-hb-l { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cv-hb-track { height: 14px; background: #eef1f6; border-radius: 7px; overflow: hidden; }
+.cv-hb-track i { display: block; height: 100%; background: var(--c); border-radius: 7px; }
+.cv-hb b { font-variant-numeric: tabular-nums; font-size: 12.5px; min-width: 96px; text-align: right; }
+.cv-vbars { display: flex; align-items: flex-end; gap: 10px; height: 150px; padding-top: 4px; }
+.cv-vbar { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; min-width: 0; }
+.cv-vbar b { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+.cv-vbar-track { flex: 1; width: 100%; max-width: 46px; display: flex; align-items: flex-end; }
+.cv-vbar-track i { display: block; width: 100%; background: #c7d2e6; border-radius: 6px 6px 2px 2px; }
+.cv-vbar.on .cv-vbar-track i { background: var(--primary); }
+.cv-vbar.on b { color: var(--text); }
+.cv-vbar small { font-size: 11.5px; color: var(--muted); }
+@media (max-width: 900px) { .cv-jsplit { grid-template-columns: 1fr; } }
+.cv-bars-gap { margin-top: 12px; }
+.cv-bars > .cv-bars-h:first-child { margin-top: 0; }

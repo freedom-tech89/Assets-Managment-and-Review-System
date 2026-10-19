@@ -344,7 +344,7 @@ const ReviewPage = (() => {
         <div class="cv-ghead" data-r="${g.head}" data-c="2" role="button" aria-expanded="${open}" title="${open ? "Hide" : "Show"} the schemes">
           <span class="cv-caret">${open ? "▾" : "▸"}</span>
           <div class="cv-gname"><i class="cv-plogo cv-c${color % 3}">${esc(this.initials(platform))}</i><div><b>${esc(platform)}</b><span>${rows.length} scheme${rows.length === 1 ? "" : "s"}</span></div></div>
-          <div class="cv-bar" title="${share.toFixed(1)}% of this fund type"><i style="width:${share}%"></i></div>
+          <div class="cv-hb" title="${share.toFixed(1)}% of this fund type"><i style="width:${share}%"></i></div>
           <div class="cv-gnum"><span>Invested</span><b>${fmt.money(this.num(g.total, "D") ?? 0)}</b></div>
           <div class="cv-gnum"><span>Current</span><b>${fmt.money(value)}</b></div>
           <div class="cv-gnum ${gain < 0 ? "cv-down" : "cv-up"}"><span>Return</span><b>${this.pct(g.total, "L") || "–"}</b></div>
@@ -520,6 +520,31 @@ const ReviewPage = (() => {
         const g = ((b - a) / Math.abs(a)) * 100;
         return `<span class="cv-pill ${g < 0 ? "cv-down" : "cv-up"}">${g >= 0 ? "▲" : "▼"} ${Math.abs(g).toFixed(1)}%</span>`;
       };
+      // Bar chart beside an item's table: its rows in the review year, and its total year by year
+      // when there is more than one year. Redrawn with the page, so typed values show at once.
+      const barChart = (rows, head) => {
+        const isSip = (r) => /SIP|Monthly|Contribution/i.test(label(r));
+        const pick = (list) => list.map((r) => ({ label: label(r), v: this.n(r, yc) || 0 })).filter((x) => x.v > 0);
+        const parts = pick(rows.filter((r) => !isSip(r))), sips = pick(rows.filter((r) => isSip(r) && !/Live SIP$|Portfolio/i.test(label(r))));
+        const byYear = years.map((y) => ({ label: y.label, v: this.n(head, y.c) || 0, on: y.c === yc }));
+        const showYears = byYear.filter((x) => x.v > 0).length > 1;
+        if (!parts.length && !sips.length && !showYears) return `<div class="cv-bars cv-bars-empty">Bar chart appears here once values are added.</div>`;
+        const hbars = (list) => {
+          const max = Math.max(...list.map((x) => x.v));
+          return list.map((x, i) => `<div class="cv-hb" title="${esc(x.label)}: ${fmt.money(x.v)}"><span class="cv-hb-l">${esc(x.label)}</span>
+            <span class="cv-hb-track"><i style="width:${Math.max((x.v / max) * 100, 1.5).toFixed(1)}%;--c:var(--bar${i % 6})"></i></span><b>${fmt.money(x.v)}</b></div>`).join("");
+        };
+        const vbars = (list) => {
+          const max = Math.max(...list.map((x) => x.v)) || 1;
+          return `<div class="cv-vbars">${list.map((x) => `<div class="cv-vbar${x.on ? " on" : ""}" title="${esc(x.label)}: ${fmt.money(x.v)}">
+            <b>${x.v ? fmt.money(x.v) : ""}</b><span class="cv-vbar-track"><i style="height:${x.v ? Math.max((x.v / max) * 100, 2).toFixed(1) : 0}%"></i></span><small>${esc(x.label)}</small></div>`).join("")}</div>`;
+        };
+        return `<div class="cv-bars">
+          ${parts.length ? `<div class="cv-bars-h">Value by fund type · ${esc(String(year))}</div>${hbars(parts)}` : ""}
+          ${sips.length ? `<div class="cv-bars-h cv-bars-gap">Monthly SIP · ${esc(String(year))}</div>${hbars(sips)}` : ""}
+          ${showYears ? `<div class="cv-bars-h cv-bars-gap">Total by year</div>${vbars(byYear)}` : ""}
+        </div>`;
+      };
       const find = (re, from = 6) => this.findRow(2, re, from);
       const stocks = find(/^STOCKS$/i), other = find(/^OTHER SAVINGS/i), grand = find(/^Grand Total Portfolio Value/i), passive = find(/^Existing Passive Income/i);
       const SECTION_ROW = /^(Total\s+\S|Grand Total|Redemption|Reason|Withdrawal|Remarks)/i;
@@ -550,7 +575,8 @@ const ReviewPage = (() => {
             <div class="cv-gnum"><span>${esc(String(year))}</span><b>${money(head)}</b>${growth(head)}</div>
             ${sip ? `<div class="cv-gnum"><span>${/SIP/i.test(label(sip)) ? "Live SIP" : "Monthly"}</span><b>${money(sip)}</b></div>` : "<div></div>"}
           </div>
-          ${open ? `<div class="cv-schemes cv-one">${this.table(it.rows.map((r) => ({ r, label: label(r), cls: r === total ? "cv-trow" : "" })), years, { corner: "By year" })}</div>` : ""}
+          ${open ? `<div class="cv-schemes cv-one"><div class="cv-jsplit">${this.table(it.rows.map((r) => ({ r, label: label(r), cls: r === total ? "cv-trow" : "" })), years, { corner: "By year" })}
+            ${barChart(it.rows.filter((r) => r !== total && r !== head), head)}</div></div>` : ""}
         </div>`;
       };
       const sections = [];
